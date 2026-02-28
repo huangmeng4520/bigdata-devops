@@ -1,0 +1,197 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2026-02-28T18:01:07.865Z
+provider: 
+---
+
+# Bigdata-DevOps 项目框架指南
+
+## 项目概述
+
+基于 Django5 + Vue3 (vben-admin) 的企业级运维管理平台，支持 RBAC 权限控制、动态菜单、按钮级权限等功能。
+
+## 技术栈
+
+### 后端
+- **框架**: Django 5.2.1 + Django REST Framework 3.16.0
+- **数据库**: MySQL (django_vue)
+- **缓存**: Redis (django_redis)
+- **异步任务**: Celery + Flower
+- **Python版本**: 3.12+
+
+### 前端
+- **框架**: Vue3 + Vite + TypeScript
+- **UI组件**: vben-admin + Ant Design Vue
+- **包管理**: pnpm
+- **Node版本**: v22.17.0
+
+## 项目结构
+
+```
+bigdata-devops/
+├── backend/                    # 后端项目
+│   ├── backend/               # Django 主配置
+│   │   ├── settings.py        # 项目配置
+│   │   ├── urls.py            # 主路由
+│   │   └── wsgi.py
+│   ├── system/                # 系统核心模块
+│   │   ├── models.py          # 数据模型
+│   │   ├── views/             # 视图层
+│   │   ├── urls.py            # 路由配置
+│   │   └── management/        # 管理命令
+│   ├── ai/                    # AI 服务模块
+│   ├── utils/                 # 工具类
+│   │   ├── models.py          # CoreModel 基类
+│   │   ├── custom_model_viewSet.py
+│   │   ├── permissions.py
+│   │   └── pagination.py
+│   ├── middleware/            # 中间件
+│   └── requirements.txt
+├── web/                       # 前端项目 (vben-admin monorepo)
+│   └── apps/web-antd/         # 主前端应用
+│       └── src/
+│           ├── api/           # API 接口
+│           ├── views/         # 页面组件
+│           │   ├── system/    # 系统管理页面
+│           │   └── ai/        # AI 模块页面
+│           ├── router/        # 路由配置
+│           └── models/        # 数据模型
+├── docker/                    # Docker 配置
+├── sql/                       # SQL 文件
+└── docker-compose.yml
+```
+
+## 核心模型 (CoreModel)
+
+所有业务模型继承 `utils.models.CoreModel`，包含以下公共字段：
+
+```python
+class CoreModel(models.Model):
+    remark = models.CharField(max_length=256, null=True, blank=True)  # 备注
+    creator = models.CharField(max_length=64, null=True, blank=True)  # 创建人
+    modifier = models.CharField(max_length=64, null=True, blank=True) # 修改人
+    update_time = models.DateTimeField(auto_now=True)                  # 修改时间
+    create_time = models.DateTimeField(auto_now_add=True)              # 创建时间
+    is_deleted = models.BooleanField(default=False)                    # 软删除标记
+
+    class Meta:
+        abstract = True
+```
+
+## 已有数据模型
+
+### system 模块
+| 模型 | 说明 | 关键字段 |
+|------|------|----------|
+| User | 用户 | username, nickname, mobile, dept, role, post, status |
+| Dept | 部门 | name, pid, status, sort, leader, phone, email |
+| Role | 角色 | name, code, status, permissions (M2M) |
+| Menu | 菜单 | name, path, component, type, auth_code, meta |
+| MenuMeta | 菜单元数据 | title, icon, sort, hide_in_menu |
+| Post | 岗位 | code, name, sort, status |
+| DictType | 字典类型 | name, value, status |
+| DictData | 字典数据 | label, value, dict_type, status |
+| LoginLog | 登录日志 | username, result, user_ip, user_agent, location |
+| Config | 参数配置 | name, key, value, config_type |
+| CityArea | 省市区 | prov_id, prov_name, city_id, city_name, area_id, area_name |
+
+### ai 模块
+- AI 对话、知识库等功能相关模型
+
+## API 路由规则
+
+```python
+# backend/backend/urls.py
+urlpatterns = [
+    path('api/admin/system/', include('system.urls')),
+    path('api/admin/ai/', include('ai.urls')),
+]
+
+# system 模块路由 (DefaultRouter)
+router.register(r'dept', views.DeptViewSet)
+router.register(r'menu', views.MenuViewSet)
+router.register(r'role', views.RoleViewSet)
+router.register(r'user', views.UserViewSet)
+# ... 其他
+```
+
+## 权限模型 (RBAC)
+
+```
+User (用户)
+  ├── M2M → Dept (部门)
+  ├── M2M → Role (角色)
+  └── M2M → Post (岗位)
+
+Role (角色)
+  └── M2M → Menu (菜单权限)
+        └── type: catalog/menu/button/embedded/link
+```
+
+## 开发规范
+
+### 新增 Django App
+1. 在 `backend/` 下创建新模块目录
+2. 在 `settings.py` 的 `INSTALLED_APPS` 中注册
+3. 在主 `urls.py` 中添加路由
+4. 模型继承 `CoreModel`
+
+### API ViewSet
+继承 `utils.custom_model_viewSet` 中的基类，支持：
+- 自动权限校验
+- 分页
+- 过滤和排序
+- 导出功能
+
+### 前端开发
+1. 在 `web/apps/web-antd/src/views/` 下创建页面
+2. 在 `web/apps/web-antd/src/api/` 下创建 API 接口
+3. 后端菜单管理中配置菜单和权限
+
+## 部署配置
+
+### Docker 环境
+- 开发环境: `docker-compose.dev.yml`
+- 生产环境: `docker-compose.prod.yml`
+
+### 环境变量
+```bash
+DB_HOST=127.0.0.1
+DB_USER=root
+DB_PASSWORD=admin123456
+REDIS_HOST=localhost
+REDIS_PORT=6379
+DEBUG=True
+DEMO_MODE=False
+```
+
+## 相关 DevOps 服务
+
+| 服务 | 用途 | 配置位置 |
+|------|------|----------|
+| GitLab CE | 代码仓库 | /Users/tengyun/ynbidata/gitlab-ce/ |
+| Jenkins | CI/CD | /Users/tengyun/ynbidata/jenkins/ |
+| Harbor | 镜像仓库 | /Users/tengyun/ynbidata/harbor/ |
+| MySQL | 数据库 | /Users/tengyun/ynbidata/devops/mysql/ |
+
+## 常用命令
+
+```bash
+# 后端
+cd backend
+pip install -r requirements.txt
+python manage.py migrate
+python manage.py runserver
+
+# Celery
+celery -A backend worker -l info
+celery -A backend beat -l info
+celery -A backend flower --port=5555
+
+# 前端
+cd web
+pnpm install
+npm run dev:antd
+```

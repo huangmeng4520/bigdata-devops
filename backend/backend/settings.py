@@ -102,9 +102,9 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': 'django_vue',
-        'USER': os.getenv('DB_USER', 'chenze'),
-        'PASSWORD': os.getenv('DB_PASSWORD', '123456'),
-        'HOST': os.getenv('DB_HOST', 'localhost'),
+        'USER': os.getenv('DB_USER', 'root'),
+        'PASSWORD': os.getenv('DB_PASSWORD', 'admin123456'),
+        'HOST': os.getenv('DB_HOST', '127.0.0.1'),
     }
 }
 

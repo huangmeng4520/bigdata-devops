@@ -76,9 +76,9 @@ node 版本v22.17.0
 3. 导入数据库（默认 MySQL）：
    ```bash
    # 先在 MySQL 中创建数据库（如 django_vue）
-   mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS django_vue DEFAULT CHARSET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+   mysql -h 127.0.0.1 -u root -p -e "CREATE DATABASE IF NOT EXISTS django_vue DEFAULT CHARSET utf8mb4 COLLATE utf8mb4_unicode_ci;"
    # 导入数据
-   mysql -u root -p django_vue < ../sql/django_vue.sql
+   mysql -h 127.0.0.1 -u root -p django_vue < ./sql/django_vue.sql
    ```
    sql 文件位于 sql/django_vue.sql。
    如需更换数据库类型，请修改 backend/backend/settings.py 中的数据库配置。
@@ -261,3 +261,19 @@ DEMO_MODE=true
 - 登录日志、操作日志
 - 支持多端适配与主题切换
 - 代码生成器辅助开发
+
+# mysql-client 安装报错
+
+```angular2html
+ brew install mysql-client  
+If you need to have mysql-client first in your PATH, run:
+  echo 'export PATH="/opt/homebrew/opt/mysql-client/bin:$PATH"' >> ~/.zshrc
+
+For compilers to find mysql-client you may need to set:
+  export LDFLAGS="-L/opt/homebrew/opt/mysql-client/lib"
+  export CPPFLAGS="-I/opt/homebrew/opt/mysql-client/include"
+
+For pkgconf to find mysql-client you may need to set:
+  export PKG_CONFIG_PATH="/opt/homebrew/opt/mysql-client/lib/pkgconfig"
+
+```
