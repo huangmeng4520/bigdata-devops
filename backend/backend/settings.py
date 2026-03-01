@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     # 'channels',
     "system",
     "ai",
+    "release",
 ]
 
 MIDDLEWARE = [

@@ -277,3 +277,7 @@ For pkgconf to find mysql-client you may need to set:
   export PKG_CONFIG_PATH="/opt/homebrew/opt/mysql-client/lib/pkgconfig"
 
 ```
+
+cd backend
+python manage.py runserver
+celery -A backend worker -l info
