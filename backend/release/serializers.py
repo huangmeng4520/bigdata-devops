@@ -3,7 +3,12 @@
 发布管理序列化器
 """
 from rest_framework import serializers
-from .models import Project, Module, Application, ConfigPackage, SyncLog, Template
+from .models import (
+    Project, Module, Application, ConfigPackage, SyncLog, Template,
+    PipelineTemplate, PipelineTemplateVersion,
+    ApplicationPipelineConfig, ApplicationPipelineVersion,
+    EnvironmentStrategy, CDConfigExport
+)
 
 
 class ProjectSerializer(serializers.ModelSerializer):
@@ -59,13 +64,17 @@ class ApplicationSerializer(serializers.ModelSerializer):
     module_name = serializers.CharField(source="module.name", read_only=True)
     app_type_display = serializers.CharField(source="get_app_type_display", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    ci_template_name = serializers.CharField(source="ci_template.name", read_only=True)
+    cd_template_name = serializers.CharField(source="cd_template.name", read_only=True)
+    jenkins_sync_status_display = serializers.CharField(source="get_jenkins_sync_status_display", read_only=True)
 
     class Meta:
         model = Application
         fields = "__all__"
         read_only_fields = [
             "creator", "modifier", "create_time", "update_time",
-            "git_url", "gitlab_project_id", "jenkins_ci_job", "jenkins_cd_job", "harbor_project"
+            "git_url", "gitlab_project_id", "jenkins_ci_job", "jenkins_cd_job", "harbor_project",
+            "jenkins_sync_status", "jenkins_sync_time", "jenkins_sync_message"
         ]
 
 
@@ -75,7 +84,8 @@ class ApplicationCreateSerializer(serializers.ModelSerializer):
         model = Application
         fields = [
             "project", "module", "name", "code", "description",
-            "app_type", "build_branch", "dockerfile_path", "status", "sort"
+            "app_type", "build_branch", "dockerfile_path", "status", "sort",
+            "ci_template", "cd_template", "ci_variables", "cd_variables"
         ]
 
     def validate(self, data):
@@ -84,6 +94,17 @@ class ApplicationCreateSerializer(serializers.ModelSerializer):
         project = data.get('project')
         if module and project and module.project_id != project.id:
             raise serializers.ValidationError({"module": "模块不属于所选项目"})
+
+        # 验证 CI 模板类型
+        ci_template = data.get('ci_template')
+        if ci_template and ci_template.template_type != 'ci':
+            raise serializers.ValidationError({"ci_template": "CI 模板类型不正确"})
+
+        # 验证 CD 模板类型
+        cd_template = data.get('cd_template')
+        if cd_template and cd_template.template_type != 'cd':
+            raise serializers.ValidationError({"cd_template": "CD 模板类型不正确"})
+
         return data
 
 
@@ -128,3 +149,204 @@ class TemplateCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Template
         fields = ["name", "code", "template_type", "app_type", "content", "description", "status"]
+
+
+# ============================================================
+# CI/CD 模板系统序列化器
+# ============================================================
+
+class PipelineTemplateVersionSerializer(serializers.ModelSerializer):
+    """模板版本序列化器"""
+    template_name = serializers.CharField(source="template.name", read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+
+    class Meta:
+        model = PipelineTemplateVersion
+        fields = "__all__"
+        read_only_fields = ["creator", "modifier", "create_time", "update_time"]
+
+
+class PipelineTemplateVersionCreateSerializer(serializers.ModelSerializer):
+    """模板版本创建序列化器"""
+    template = serializers.PrimaryKeyRelatedField(
+        queryset=PipelineTemplate.objects.all(),
+        required=False
+    )
+
+    class Meta:
+        model = PipelineTemplateVersion
+        fields = ["template", "version", "content", "variables", "stages", "stages_content", "change_log", "is_latest", "status"]
+
+
+class PipelineTemplateSerializer(serializers.ModelSerializer):
+    """流水线模板序列化器"""
+    template_type_display = serializers.CharField(source='get_template_type_display', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    version_count = serializers.SerializerMethodField()
+    latest_version = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PipelineTemplate
+        fields = "__all__"
+        read_only_fields = ["creator", "modifier", "create_time", "update_time"]
+
+    def get_version_count(self, obj):
+        return obj.versions.filter(is_deleted=False).count()
+
+    def get_latest_version(self, obj):
+        latest = obj.latest_version
+        if latest:
+            return {"id": latest.id, "version": latest.version}
+        return None
+
+
+class PipelineTemplateCreateSerializer(serializers.ModelSerializer):
+    """流水线模板创建序列化器"""
+    name = serializers.CharField(required=True, min_length=1)
+    code = serializers.CharField(required=True, min_length=1)
+    template_type = serializers.CharField(required=True)
+    language = serializers.CharField(required=True, min_length=1)
+    language_version = serializers.CharField(required=False, allow_blank=True, default='')
+    framework = serializers.CharField(required=False, allow_blank=True, default='')
+    description = serializers.CharField(required=False, allow_blank=True, default='')
+
+    class Meta:
+        model = PipelineTemplate
+        fields = ["id", "name", "code", "template_type", "language", "language_version", "framework", "description", "is_official", "status"]
+        read_only_fields = ["id"]
+
+    def validate_code(self, value):
+        """验证 code 唯一性"""
+        if not value:
+            raise serializers.ValidationError("模板编码不能为空")
+        # 检查是否已存在（排除当前记录）
+        queryset = PipelineTemplate.objects.filter(code=value, is_deleted=False)
+        if self.instance:
+            queryset = queryset.exclude(id=self.instance.id)
+        if queryset.exists():
+            raise serializers.ValidationError(f"模板编码 '{value}' 已存在")
+        return value
+
+
+class PipelineTemplateDetailSerializer(PipelineTemplateSerializer):
+    """流水线模板详情序列化器（包含版本列表）"""
+    versions = PipelineTemplateVersionSerializer(many=True, read_only=True)
+
+    class Meta(PipelineTemplateSerializer.Meta):
+        pass
+
+
+class ApplicationPipelineVersionSerializer(serializers.ModelSerializer):
+    """应用配置版本序列化器"""
+    config_name = serializers.SerializerMethodField()
+    generated_by_name = serializers.CharField(source="generated_by", read_only=True)
+
+    class Meta:
+        model = ApplicationPipelineVersion
+        fields = "__all__"
+        read_only_fields = ["create_time", "update_time"]
+
+    def get_config_name(self, obj):
+        return str(obj.config)
+
+
+class ApplicationPipelineConfigSerializer(serializers.ModelSerializer):
+    """应用流水线配置序列化器"""
+    application_name = serializers.CharField(source="application.name", read_only=True)
+    config_type_display = serializers.CharField(source='get_config_type_display', read_only=True)
+    environment_display = serializers.CharField(source='get_environment_display', read_only=True)
+    template_name = serializers.CharField(source="template.name", read_only=True)
+    template_version_name = serializers.SerializerMethodField()
+    version_count = serializers.SerializerMethodField()
+    jenkins_sync_status_display = serializers.CharField(source='get_jenkins_sync_status_display', read_only=True)
+
+    class Meta:
+        model = ApplicationPipelineConfig
+        fields = "__all__"
+        read_only_fields = [
+            "creator", "modifier", "create_time", "update_time", "current_version",
+            "jenkins_sync_status", "jenkins_sync_time", "jenkins_sync_message", "jenkins_job_name"
+        ]
+
+    def get_template_version_name(self, obj):
+        if obj.template_version:
+            return f"v{obj.template_version.version}"
+        return None
+
+    def get_version_count(self, obj):
+        return obj.versions.count()
+
+
+class ApplicationPipelineConfigCreateSerializer(serializers.ModelSerializer):
+    """应用流水线配置创建序列化器"""
+    class Meta:
+        model = ApplicationPipelineConfig
+        fields = [
+            "application", "config_type", "environment", "template", "template_version",
+            "custom_content", "variables", "stages_config", "is_active"
+        ]
+
+
+class EnvironmentStrategySerializer(serializers.ModelSerializer):
+    """环境策略序列化器"""
+    pipeline_mode_display = serializers.CharField(source='get_pipeline_mode_display', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+
+    class Meta:
+        model = EnvironmentStrategy
+        fields = "__all__"
+        read_only_fields = ["creator", "modifier", "create_time", "update_time"]
+
+
+class EnvironmentStrategyCreateSerializer(serializers.ModelSerializer):
+    """环境策略创建序列化器"""
+    name = serializers.CharField(required=False, allow_blank=True, default='')
+    code = serializers.CharField(required=False, allow_blank=True, default='')
+    ci_jenkins = serializers.CharField(required=False, allow_blank=True, default='')
+    cd_jenkins = serializers.CharField(required=False, allow_blank=True, default='')
+    description = serializers.CharField(required=False, allow_blank=True, default='')
+
+    class Meta:
+        model = EnvironmentStrategy
+        fields = [
+            "name", "code", "environment", "pipeline_mode", "ci_jenkins", "cd_jenkins",
+            "requires_approval", "auto_deploy", "description", "is_default", "status"
+        ]
+
+
+class CDConfigExportSerializer(serializers.ModelSerializer):
+    """CD配置导出序列化器"""
+    application_name = serializers.CharField(source="application.name", read_only=True)
+    export_format_display = serializers.CharField(source='get_export_format_display', read_only=True)
+    exported_by_name = serializers.CharField(source="exported_by", read_only=True)
+
+    class Meta:
+        model = CDConfigExport
+        fields = "__all__"
+        read_only_fields = ["creator", "create_time", "update_time", "download_count"]
+
+
+class CDConfigExportCreateSerializer(serializers.ModelSerializer):
+    """CD配置导出创建序列化器"""
+    class Meta:
+        model = CDConfigExport
+        fields = ["application", "environment", "config_version", "export_format", "content", "file_path", "exported_by"]
+
+
+# ============================================================
+# 命名验证相关序列化器
+# ============================================================
+
+class ValidateNamingSerializer(serializers.Serializer):
+    """命名验证序列化器"""
+    type = serializers.ChoiceField(choices=['project', 'module', 'app'], help_text="命名类型")
+    name = serializers.CharField(max_length=64, help_text="名称")
+
+
+class GenerateNamesSerializer(serializers.Serializer):
+    """生成标准化名称序列化器"""
+    project = serializers.CharField(max_length=32, help_text="项目编码")
+    module = serializers.CharField(max_length=32, help_text="模块编码")
+    app = serializers.CharField(max_length=64, help_text="应用编码")
+    version = serializers.CharField(max_length=32, required=False, default="latest", help_text="版本号")
+    environment = serializers.CharField(max_length=32, required=False, default="dev", help_text="环境")

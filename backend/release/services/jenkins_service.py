@@ -54,7 +54,7 @@ class JenkinsService(BaseService):
 
     def _get_headers(self) -> Dict[str, str]:
         """获取请求头"""
-        headers = {"Content-Type": "application/xml"}
+        headers = {"Content-Type": "application/xml; charset=utf-8"}
         crumb = self._get_crumb()
         if crumb:
             field, value = crumb.split("=")
@@ -428,3 +428,159 @@ class JenkinsService(BaseService):
         except DevOpsException as e:
             self._log_warning(f"Jenkins 连接测试失败: {e.message}")
             return False
+
+    # ==================== 配置更新操作 ====================
+
+    def get_job_config(self, name: str, folder: str = None) -> Optional[str]:
+        """
+        获取 Job 配置 XML
+
+        Args:
+            name: Job 名称
+            folder: Folder 路径
+
+        Returns:
+            XML 配置字符串，失败返回 None
+        """
+        folder_path = self._build_job_path(folder) if folder else ""
+        path = f"{folder_path}/job/{name}" if folder else f"/job/{name}"
+        response = self._request("GET", f"{path}/config.xml")
+
+        if response.status_code == 200:
+            return response.text
+        return None
+
+    def update_job_config(
+        self,
+        name: str,
+        folder: str = None,
+        jenkinsfile_content: str = None,
+        git_url: str = None,
+        branch: str = "main",
+        description: str = ""
+    ) -> bool:
+        """
+        更新 Job 配置（用于同步 Jenkinsfile）
+
+        Args:
+            name: Job 名称
+            folder: Folder 路径
+            jenkinsfile_content: Jenkinsfile 内容（内联脚本模式）
+            git_url: Git 仓库地址（可选，用于 SCM 模式）
+            branch: 分支
+            description: 描述
+
+        Returns:
+            是否更新成功
+        """
+        # 检查 Job 是否存在
+        if not self.job_exists(name, folder):
+            self._log_warning(f"Jenkins Job 不存在: {name}", {"folder": folder})
+            # 自动创建
+            return self.create_pipeline_job(
+                name=name,
+                folder=folder,
+                git_url=git_url,
+                branch=branch,
+                description=description
+            )
+
+        # 生成新的配置 XML
+        if jenkinsfile_content:
+            # 使用内联脚本模式（直接使用 Jenkinsfile 内容）
+            job_xml = self._generate_inline_pipeline_xml(
+                script=jenkinsfile_content,
+                description=description
+            )
+        else:
+            # 使用 SCM 模式
+            job_xml = self._generate_pipeline_xml(
+                git_url=git_url,
+                branch=branch,
+                description=description
+            )
+
+        # 更新配置
+        folder_path = self._build_job_path(folder) if folder else ""
+        path = f"{folder_path}/job/{name}" if folder else f"/job/{name}"
+
+        self._log_info(f"更新 Jenkins Job 配置: {name}", {"folder": folder})
+
+        response = self._request("POST", f"{path}/config.xml", data=job_xml.encode("utf-8"))
+
+        if response.status_code in [200, 201, 302]:
+            self._log_info(f"Jenkins Job 配置更新成功: {name}")
+            return True
+        else:
+            self._log_error(f"Jenkins Job 配置更新失败", {
+                "status_code": response.status_code,
+                "response": response.text[:500]
+            })
+            return False
+
+    def _generate_inline_pipeline_xml(self, script: str, description: str = "") -> str:
+        """生成内联脚本的 Pipeline Job XML 配置"""
+        # 转义 XML 特殊字符
+        escaped_script = script.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return f'''<?xml version="1.0" encoding="UTF-8"?>
+<flow-definition plugin="workflow-job">
+  <description>{description}</description>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps">
+    <script>{escaped_script}</script>
+    <sandbox>true</sandbox>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+</flow-definition>'''
+
+    def delete_job(self, name: str, folder: str = None) -> bool:
+        """
+        删除 Job
+
+        Args:
+            name: Job 名称
+            folder: Folder 路径
+
+        Returns:
+            是否删除成功
+        """
+        folder_path = self._build_job_path(folder) if folder else ""
+        path = f"{folder_path}/job/{name}" if folder else f"/job/{name}"
+
+        self._log_info(f"删除 Jenkins Job: {name}", {"folder": folder})
+        response = self._request("POST", f"{path}/doDelete")
+
+        if response.status_code in [200, 302]:
+            self._log_info(f"Jenkins Job 删除成功: {name}")
+            return True
+        return False
+
+    def trigger_build(self, name: str, folder: str = None, parameters: Dict = None) -> bool:
+        """
+        触发构建
+
+        Args:
+            name: Job 名称
+            folder: Folder 路径
+            parameters: 构建参数
+
+        Returns:
+            是否触发成功
+        """
+        folder_path = self._build_job_path(folder) if folder else ""
+        path = f"{folder_path}/job/{name}" if folder else f"/job/{name}"
+
+        if parameters:
+            # 参数化构建
+            param_str = "&".join([f"{k}={v}" for k, v in parameters.items()])
+            endpoint = f"{path}/buildWithParameters?{param_str}"
+        else:
+            endpoint = f"{path}/build"
+
+        self._log_info(f"触发 Jenkins 构建: {name}", {"folder": folder, "parameters": parameters})
+        response = self._request("POST", endpoint)
+
+        if response.status_code in [200, 201, 302]:
+            self._log_info(f"Jenkins 构建触发成功: {name}")
+            return True
+        return False

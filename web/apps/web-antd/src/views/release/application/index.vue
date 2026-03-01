@@ -8,7 +8,6 @@ import {
 import type { ReleaseApplicationApi } from '#/api/release';
 
 import { Page, useVbenModal } from '@vben/common-ui';
-import { Plus } from '@vben/icons';
 
 import { ref } from 'vue';
 
@@ -17,12 +16,10 @@ import { message, Tag, Tooltip } from 'ant-design-vue';
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import {
   deleteApplication,
-  generateConfig,
   getApplicationList,
-  getModulesByProject,
   getProjectList,
-  getResourceStatus,
   syncResources,
+  syncToJenkins,
 } from '#/api/release';
 import { $t } from '#/locales';
 
@@ -38,10 +35,6 @@ const [FormModal, formModalApi] = useVbenModal({
 const projectOptions = ref<{ label: string; value: number }[]>([]);
 // 模块列表用于筛选（根据项目动态变化）
 const moduleOptions = ref<{ label: string; value: number }[]>([]);
-// 当前选中的项目ID
-const selectedProjectId = ref<number | undefined>();
-// 资源状态缓存
-const resourceStatusMap = ref<Record<number, any>>({});
 
 // 加载项目列表
 async function loadProjects() {
@@ -50,30 +43,6 @@ async function loadProjects() {
     label: item.name,
     value: item.id,
   }));
-}
-
-// 加载模块列表
-async function loadModules(projectId: number) {
-  try {
-    const result = await getModulesByProject(projectId);
-    moduleOptions.value = (result || []).map((item: any) => ({
-      label: item.name,
-      value: item.id,
-    }));
-  } catch {
-    moduleOptions.value = [];
-  }
-}
-
-// 项目变更时重新加载模块
-async function onProjectChange(projectId: number) {
-  selectedProjectId.value = projectId;
-  moduleOptions.value = [];
-  if (projectId) {
-    await loadModules(projectId);
-  }
-  // 触发表格刷新
-  gridApi.query();
 }
 
 // 初始化加载项目列表
@@ -138,18 +107,24 @@ function onSyncResources(row: ReleaseApplicationApi.Application) {
 }
 
 /**
- * 生成配置
+ * 同步到 Jenkins
  */
-function onGenerateConfig(row: ReleaseApplicationApi.Application) {
+function onSyncJenkins(row: ReleaseApplicationApi.Application) {
+  if (!row.ci_template && !row.cd_template) {
+    message.warning('请先在应用编辑中关联 CI 或 CD 模板');
+    return;
+  }
+
   const hideLoading = message.loading({
-    content: `正在为 ${row.name} 生成配置...`,
+    content: `正在同步 ${row.name} 的 CI/CD 配置到 Jenkins...`,
     duration: 0,
     key: 'action_process_msg',
   });
-  generateConfig(row.id)
-    .then(() => {
+  syncToJenkins(row.id)
+    .then((res) => {
+      hideLoading();
       message.success({
-        content: `${row.name} 的配置生成成功`,
+        content: res.message || '同步任务已提交',
         key: 'action_process_msg',
       });
       refreshGrid();
@@ -179,8 +154,8 @@ function onActionClick({
       onSyncResources(row);
       break;
     }
-    case 'generate-config': {
-      onGenerateConfig(row);
+    case 'sync-jenkins': {
+      onSyncJenkins(row);
       break;
     }
   }
@@ -208,8 +183,6 @@ const [Grid, gridApi] = useVbenVxeGrid({
             ...formValues,
           };
           const result = await getApplicationList(params);
-          // 清空资源状态缓存，以便重新加载
-          resourceStatusMap.value = {};
           return {
             items: result.items,
             total: result.total,
@@ -237,19 +210,20 @@ function refreshGrid() {
   gridApi.query();
 }
 
-/**
- * 获取资源状态标签颜色
- */
-function getResourceColor(status: string) {
-  return status === 'created' ? 'success' : 'default';
-}
+// Jenkins 同步状态颜色
+const SYNC_STATUS_COLORS: Record<number, string> = {
+  0: 'default',
+  1: 'processing',
+  2: 'success',
+  3: 'error',
+};
 
-/**
- * 获取资源状态文本
- */
-function getResourceText(status: string) {
-  return status === 'created' ? '已创建' : '未创建';
-}
+const SYNC_STATUS_TEXT: Record<number, string> = {
+  0: '待同步',
+  1: '同步中',
+  2: '已同步',
+  3: '同步失败',
+};
 </script>
 
 <template>
@@ -269,6 +243,33 @@ function getResourceText(status: string) {
           ]"
         />
       </template>
+
+      <!-- CI/CD 模板状态 -->
+      <template #cicd_templates="{ row }">
+        <div style="display: flex; gap: 4px; justify-content: center; flex-wrap: wrap;">
+          <Tooltip :title="row.ci_template_name ? `CI: ${row.ci_template_name}` : '未配置 CI 模板'">
+            <Tag :color="row.ci_template_name ? 'blue' : 'default'">
+              CI
+            </Tag>
+          </Tooltip>
+          <Tooltip :title="row.cd_template_name ? `CD: ${row.cd_template_name}` : '未配置 CD 模板'">
+            <Tag :color="row.cd_template_name ? 'green' : 'default'">
+              CD
+            </Tag>
+          </Tooltip>
+        </div>
+      </template>
+
+      <!-- Jenkins 同步状态 -->
+      <template #jenkins_sync="{ row }">
+        <Tooltip :title="row.jenkins_sync_message || SYNC_STATUS_TEXT[row.jenkins_sync_status]">
+          <Tag :color="SYNC_STATUS_COLORS[row.jenkins_sync_status]">
+            {{ SYNC_STATUS_TEXT[row.jenkins_sync_status] }}
+          </Tag>
+        </Tooltip>
+      </template>
+
+      <!-- DevOps 资源状态 -->
       <template #devops_resources="{ row }">
         <div style="display: flex; gap: 4px; justify-content: center; flex-wrap: wrap;">
           <Tooltip :title="row.gitlab_project_id ? 'GitLab 项目已创建' : 'GitLab 项目未创建'">

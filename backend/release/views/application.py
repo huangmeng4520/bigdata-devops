@@ -7,14 +7,17 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from utils.custom_model_viewSet import CustomModelViewSet
-from ..models import Application, ConfigPackage, SyncLog
+from ..models import Application, ConfigPackage, SyncLog, PipelineTemplate
 from ..serializers import (
     ApplicationSerializer, ApplicationCreateSerializer,
     ConfigPackageSerializer, SyncLogSerializer
 )
 from ..filters import ApplicationFilter
 from ..services import GitLabService, DevOpsException
-from ..tasks import create_gitlab_resources, create_jenkins_resources, create_harbor_resources, generate_config_package
+from ..tasks import (
+    create_gitlab_resources, create_jenkins_resources, create_harbor_resources,
+    generate_config_package, sync_application_jenkins
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +38,7 @@ class ApplicationViewSet(CustomModelViewSet):
     }
 
     def get_queryset(self):
-        queryset = super().get_queryset().select_related("project", "module")
+        queryset = super().get_queryset().select_related("project", "module", "ci_template", "cd_template")
         if self.enable_soft_delete:
             queryset = queryset.filter(is_deleted=False)
         return queryset
@@ -148,8 +151,30 @@ class ApplicationViewSet(CustomModelViewSet):
             return None
 
     def perform_update(self, serializer):
-        """更新时自动设置修改人"""
+        """更新时自动设置修改人，并检查是否需要同步到 Jenkins"""
+        instance = serializer.instance
+        old_ci_template = instance.ci_template_id
+        old_cd_template = instance.cd_template_id
+        old_ci_variables = instance.ci_variables
+        old_cd_variables = instance.cd_variables
+
         serializer.save(modifier=self.request.user.username)
+
+        # 检查 CI/CD 配置是否变更
+        instance.refresh_from_db()
+        ci_changed = (
+            old_ci_template != instance.ci_template_id or
+            old_ci_variables != instance.ci_variables
+        )
+        cd_changed = (
+            old_cd_template != instance.cd_template_id or
+            old_cd_variables != instance.cd_variables
+        )
+
+        # 如果配置变更且有关联模板，自动同步到 Jenkins
+        if (ci_changed or cd_changed) and (instance.ci_template or instance.cd_template):
+            logger.info(f"应用 {instance.name} CI/CD 配置变更，触发 Jenkins 同步")
+            sync_application_jenkins.delay(instance.id)
 
     @action(detail=True, methods=["get"])
     def config_packages(self, request, pk=None):
@@ -239,5 +264,97 @@ class ApplicationViewSet(CustomModelViewSet):
                     "project": app.harbor_project,
                     "status": "created" if app.harbor_project else "pending"
                 }
+            }
+        })
+
+    @action(detail=True, methods=["post"])
+    def sync_to_jenkins(self, request, pk=None):
+        """
+        手动同步 CI/CD 配置到 Jenkins
+
+        将关联的 CI/CD 模板同步到 Jenkins Job
+        """
+        app = self.get_object()
+
+        # 检查是否有关联模板
+        if not app.ci_template and not app.cd_template:
+            return Response({
+                "code": 1,
+                "message": "请先关联 CI 或 CD 模板"
+            }, status=400)
+
+        # 触发异步同步任务
+        task = sync_application_jenkins.delay(app.id)
+
+        return Response({
+            "code": 0,
+            "message": "Jenkins 同步任务已提交",
+            "data": {"task_id": task.id}
+        })
+
+    @action(detail=True, methods=["get"])
+    def jenkins_sync_status(self, request, pk=None):
+        """获取 Jenkins 同步状态"""
+        app = self.get_object()
+
+        return Response({
+            "code": 0,
+            "data": {
+                "sync_status": app.jenkins_sync_status,
+                "sync_status_display": app.get_jenkins_sync_status_display(),
+                "sync_time": app.jenkins_sync_time,
+                "sync_message": app.jenkins_sync_message,
+                "ci_template": app.ci_template.name if app.ci_template else None,
+                "cd_template": app.cd_template.name if app.cd_template else None,
+            }
+        })
+
+    @action(detail=True, methods=["get"])
+    def preview_jenkinsfile(self, request, pk=None):
+        """预览生成的 Jenkinsfile"""
+        from ..services import JenkinsService
+
+        app = self.get_object()
+        template_type = request.query_params.get("type", "ci")  # ci 或 cd
+
+        template = app.ci_template if template_type == "ci" else app.cd_template
+        variables = app.ci_variables if template_type == "ci" else app.cd_variables
+
+        if not template:
+            return Response({
+                "code": 1,
+                "message": f"未关联 {template_type.upper()} 模板"
+            }, status=400)
+
+        # 获取最新版本
+        latest_version = template.latest_version
+        if not latest_version:
+            return Response({
+                "code": 1,
+                "message": "模板没有可用版本"
+            }, status=400)
+
+        # 合并变量
+        content = latest_version.content
+        template_variables = latest_version.variables or {}
+
+        # 先替换模板默认变量
+        if template_variables and isinstance(template_variables, dict):
+            for var in template_variables.get('variables', []):
+                var_name = var.get('name')
+                if var_name and var_name not in variables:
+                    variables[var_name] = var.get('default', '')
+
+        # 替换用户变量
+        for key, value in variables.items():
+            content = content.replace(f'${{{key}}}', str(value))
+
+        return Response({
+            "code": 0,
+            "data": {
+                "content": content,
+                "template_name": template.name,
+                "template_version": latest_version.version,
+                "variables": variables,
             }
         })

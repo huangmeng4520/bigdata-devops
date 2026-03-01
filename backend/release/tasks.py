@@ -371,3 +371,173 @@ def test_all_connections():
 
     logger.info(f"[Celery] 连接测试结果: {results}")
     return results
+
+
+# ============================================================
+# Jenkins 配置同步任务
+# ============================================================
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def sync_application_jenkins(self, app_id: int):
+    """
+    同步应用的 CI/CD 配置到 Jenkins
+
+    Args:
+        app_id: Application ID
+    """
+    from django.utils import timezone
+    from .models import Application, SyncLog
+    from .services import JenkinsService, DevOpsException
+
+    logger.info(f"[Celery] 开始同步应用 Jenkins 配置: app_id={app_id}")
+
+    try:
+        app = Application.objects.select_related(
+            'project', 'module', 'ci_template', 'cd_template'
+        ).get(pk=app_id)
+    except Application.DoesNotExist:
+        logger.error(f"[Celery] 应用不存在: app_id={app_id}")
+        return {"success": False, "error": "应用不存在"}
+
+    # 更新状态为"同步中"
+    app.jenkins_sync_status = 1
+    app.save(update_fields=['jenkins_sync_status'])
+
+    results = {"ci": None, "cd": None}
+
+    try:
+        jenkins = JenkinsService()
+        folder = f"{app.project.code}/{app.module.code}"
+
+        # 同步 CI Job
+        if app.ci_template:
+            result = _sync_single_job(
+                jenkins=jenkins,
+                app=app,
+                template=app.ci_template,
+                variables=app.ci_variables or {},
+                job_type='ci',
+                folder=folder
+            )
+            results["ci"] = result
+
+        # 同步 CD Job
+        if app.cd_template:
+            result = _sync_single_job(
+                jenkins=jenkins,
+                app=app,
+                template=app.cd_template,
+                variables=app.cd_variables or {},
+                job_type='cd',
+                folder=folder
+            )
+            results["cd"] = result
+
+        # 更新同步状态
+        all_success = all(
+            r is None or r.get("success")
+            for r in [results["ci"], results["cd"]]
+        )
+
+        with transaction.atomic():
+            app.jenkins_sync_status = 2 if all_success else 3
+            app.jenkins_sync_time = timezone.now()
+            app.jenkins_sync_message = "同步成功" if all_success else "部分同步失败"
+            app.save(update_fields=['jenkins_sync_status', 'jenkins_sync_time', 'jenkins_sync_message'])
+
+        logger.info(f"[Celery] 应用 Jenkins 配置同步完成: app_id={app_id}, results={results}")
+        return {"success": all_success, "results": results}
+
+    except DevOpsException as e:
+        logger.error(f"[Celery] Jenkins 配置同步失败: {e.message}")
+
+        app.jenkins_sync_status = 3
+        app.jenkins_sync_message = e.message
+        app.save(update_fields=['jenkins_sync_status', 'jenkins_sync_message'])
+
+        SyncLog.objects.create(
+            app=app,
+            project=app.project,
+            module=app.module,
+            sync_type="jenkins",
+            resource_name=f"{app.project.code}/{app.module.code}/{app.code}",
+            action="update",
+            status=0,
+            message=e.message
+        )
+
+        raise self.retry(exc=e)
+
+    except Exception as e:
+        logger.exception(f"[Celery] Jenkins 配置同步异常: {e}")
+
+        app.jenkins_sync_status = 3
+        app.jenkins_sync_message = str(e)[:512]
+        app.save(update_fields=['jenkins_sync_status', 'jenkins_sync_message'])
+
+        return {"success": False, "error": str(e)}
+
+
+def _sync_single_job(jenkins, app, template, variables, job_type, folder):
+    """同步单个 Job (CI 或 CD)"""
+    from .models import SyncLog
+
+    # 获取最新版本
+    latest_version = template.latest_version
+    if not latest_version:
+        return {"success": False, "error": "模板没有可用版本"}
+
+    # 合并变量
+    content = latest_version.content
+    template_variables = latest_version.variables or {}
+
+    # 先使用模板默认变量
+    final_variables = {}
+    if template_variables and isinstance(template_variables, dict):
+        for var in template_variables.get('variables', []):
+            var_name = var.get('name')
+            if var_name:
+                final_variables[var_name] = var.get('default', '')
+
+    # 用户变量覆盖
+    final_variables.update(variables)
+
+    # 替换变量
+    for key, value in final_variables.items():
+        content = content.replace(f'${{{key}}}', str(value))
+
+    # Job 名称
+    job_name = f"{app.code}-{job_type}"
+
+    # 同步到 Jenkins
+    success = jenkins.update_job_config(
+        name=job_name,
+        folder=folder,
+        jenkinsfile_content=content,
+        git_url=app.git_url,
+        branch=app.build_branch,
+        description=f"{job_type.upper()} for {app.project.name}/{app.module.name}/{app.name}"
+    )
+
+    if success:
+        # 更新 Job 名称
+        if job_type == 'ci':
+            app.jenkins_ci_job = f"{folder}/{job_name}"
+        else:
+            app.jenkins_cd_job = f"{folder}/{job_name}"
+
+        # 记录日志
+        SyncLog.objects.create(
+            app=app,
+            project=app.project,
+            module=app.module,
+            sync_type="jenkins",
+            resource_name=f"{folder}/{job_name}",
+            action="update",
+            status=1,
+            message=f"同步 {job_type.upper()} 配置成功: {template.name} v{latest_version.version}"
+        )
+
+        return {"success": True, "job_name": f"{folder}/{job_name}"}
+    else:
+        return {"success": False, "error": "更新 Jenkins Job 失败"}

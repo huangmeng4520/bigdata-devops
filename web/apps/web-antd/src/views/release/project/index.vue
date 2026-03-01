@@ -8,7 +8,6 @@ import {
 import type { ReleaseProjectApi } from '#/api/release';
 
 import { Page, useVbenModal } from '@vben/common-ui';
-import { Plus } from '@vben/icons';
 
 import { message, Tag } from 'ant-design-vue';
 

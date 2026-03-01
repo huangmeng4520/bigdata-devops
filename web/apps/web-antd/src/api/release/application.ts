@@ -1,5 +1,3 @@
-import type { Recordable } from '@vben/types';
-
 import { requestClient } from '#/api/request';
 
 // 应用类型选项
@@ -31,7 +29,20 @@ export namespace ReleaseApplicationApi {
     harbor_project?: string;
     build_branch: string;
     dockerfile_path: string;
+    // CI/CD 模板关联
+    ci_template?: number;
+    ci_template_name?: string;
+    cd_template?: number;
+    cd_template_name?: string;
+    ci_variables?: Record<string, any>;
+    cd_variables?: Record<string, any>;
+    // Jenkins 同步状态
+    jenkins_sync_status: 0 | 1 | 2 | 3;
+    jenkins_sync_status_display?: string;
+    jenkins_sync_time?: string;
+    jenkins_sync_message?: string;
     status: 0 | 1;
+    status_display?: string;
     sort: number;
     remark?: string;
     creator?: string;
@@ -49,6 +60,22 @@ export namespace ReleaseApplicationApi {
     module?: number;
     app_type?: string;
     status?: number;
+  }
+
+  export interface JenkinsSyncStatus {
+    sync_status: 0 | 1 | 2 | 3;
+    sync_status_display: string;
+    sync_time?: string;
+    sync_message?: string;
+    ci_template?: string;
+    cd_template?: string;
+  }
+
+  export interface JenkinsfilePreview {
+    content: string;
+    template_name: string;
+    template_version: string;
+    variables: Record<string, any>;
   }
 }
 
@@ -128,6 +155,29 @@ async function getResourceStatus(id: number) {
   }>(`/release/application/${id}/resource_status/`);
 }
 
+/**
+ * 同步 CI/CD 配置到 Jenkins
+ */
+async function syncToJenkins(id: number) {
+  return requestClient.post<{ task_id: string; message: string }>(`/release/application/${id}/sync_to_jenkins/`);
+}
+
+/**
+ * 获取 Jenkins 同步状态
+ */
+async function getJenkinsSyncStatus(id: number) {
+  return requestClient.get<{ data: ReleaseApplicationApi.JenkinsSyncStatus }>(`/release/application/${id}/jenkins_sync_status/`);
+}
+
+/**
+ * 预览 Jenkinsfile
+ */
+async function previewJenkinsfile(id: number, type: 'ci' | 'cd' = 'ci') {
+  return requestClient.get<{ data: ReleaseApplicationApi.JenkinsfilePreview }>(`/release/application/${id}/preview_jenkinsfile/`, {
+    params: { type },
+  });
+}
+
 export {
   createApplication,
   deleteApplication,
@@ -136,7 +186,10 @@ export {
   getApplicationDetail,
   getApplicationList,
   getApplicationSyncLogs,
+  getJenkinsSyncStatus,
   getResourceStatus,
+  previewJenkinsfile,
   syncResources,
+  syncToJenkins,
   updateApplication,
 };

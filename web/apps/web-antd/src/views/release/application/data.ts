@@ -8,6 +8,7 @@ import type { Ref } from 'vue';
 
 import { z } from '#/adapter/form';
 import { getModuleList, getProjectList } from '#/api/release';
+import { getTemplateList } from '#/api/release/pipelineTemplate';
 import { APP_TYPE_OPTIONS } from '#/api/release';
 import { $t } from '#/locales';
 import { format_datetime } from '#/utils/date';
@@ -119,39 +120,6 @@ export function useSchema(): VbenFormSchema[] {
       },
     },
     {
-      component: 'InputNumber',
-      fieldName: 'gitlab_project_id',
-      label: 'GitLab Project ID',
-      componentProps: {
-        placeholder: '可选，GitLab项目ID',
-        min: 1,
-      },
-    },
-    {
-      component: 'Input',
-      fieldName: 'jenkins_ci_job',
-      label: 'Jenkins CI Job',
-      componentProps: {
-        placeholder: 'CI构建任务名称',
-      },
-    },
-    {
-      component: 'Input',
-      fieldName: 'jenkins_cd_job',
-      label: 'Jenkins CD Job',
-      componentProps: {
-        placeholder: 'CD部署任务名称',
-      },
-    },
-    {
-      component: 'Input',
-      fieldName: 'harbor_project',
-      label: 'Harbor项目',
-      componentProps: {
-        placeholder: 'Docker镜像仓库名称',
-      },
-    },
-    {
       component: 'Input',
       fieldName: 'build_branch',
       label: '构建分支',
@@ -168,6 +136,48 @@ export function useSchema(): VbenFormSchema[] {
         placeholder: '如：./Dockerfile 或 docker/Dockerfile',
       },
       defaultValue: './Dockerfile',
+    },
+    // CI/CD 模板关联
+    {
+      component: 'Divider',
+      fieldName: 'divider_cicd',
+      label: 'CI/CD 配置',
+      componentProps: {
+        orientation: 'left',
+        plain: true,
+      },
+    },
+    {
+      component: 'ApiSelect',
+      fieldName: 'ci_template',
+      label: 'CI 流水线模板',
+      componentProps: {
+        api: () => getTemplateList({ page_size: 1000, status: 1, template_type: 'ci' }),
+        resultField: 'items',
+        labelField: 'name',
+        valueField: 'id',
+        placeholder: '选择 CI 模板（可选）',
+        showSearch: true,
+        allowClear: true,
+        filterOption: (input: string, option: { label: string }) =>
+          option.label.toLowerCase().includes(input.toLowerCase()),
+      },
+    },
+    {
+      component: 'ApiSelect',
+      fieldName: 'cd_template',
+      label: 'CD 流水线模板',
+      componentProps: {
+        api: () => getTemplateList({ page_size: 1000, status: 1, template_type: 'cd' }),
+        resultField: 'items',
+        labelField: 'name',
+        valueField: 'id',
+        placeholder: '选择 CD 模板（可选）',
+        showSearch: true,
+        allowClear: true,
+        filterOption: (input: string, option: { label: string }) =>
+          option.label.toLowerCase().includes(input.toLowerCase()),
+      },
     },
     {
       component: 'InputNumber',
@@ -309,6 +319,18 @@ export function useColumns(
       width: 100,
     },
     {
+      title: 'CI/CD 模板',
+      width: 140,
+      align: 'center',
+      slots: { default: 'cicd_templates' },
+    },
+    {
+      title: 'Jenkins 同步',
+      width: 100,
+      align: 'center',
+      slots: { default: 'jenkins_sync' },
+    },
+    {
       title: 'DevOps资源',
       width: 180,
       align: 'center',
@@ -353,8 +375,8 @@ export function useColumns(
         name: 'CellOperation',
         options: [
           op('release:application:edit', 'edit'),
+          op('release:application:sync-jenkins', { code: 'sync-jenkins', text: '同步 Jenkins' }),
           op('release:application:sync-resources', { code: 'sync-resources', text: '同步资源' }),
-          op('release:application:generate-config', { code: 'generate-config', text: '生成配置' }),
           op('release:application:delete', 'delete'),
         ],
       },

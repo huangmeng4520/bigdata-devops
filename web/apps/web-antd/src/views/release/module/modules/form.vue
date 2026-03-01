@@ -61,9 +61,10 @@ const [Modal, modalApi] = useVbenModal({
       if (data) {
         formData.value = data;
         // 确保 project 是 ID 而不是对象
+        const projectId = typeof data.project === 'object' && data.project !== null ? (data.project as { id: number }).id : data.project;
         const formValues = {
           ...data,
-          project: typeof data.project === 'object' ? data.project.id : data.project,
+          project: projectId,
         };
         formApi.setValues(formValues);
       }

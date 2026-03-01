@@ -281,3 +281,142 @@ For pkgconf to find mysql-client you may need to set:
 cd backend
 python manage.py runserver
 celery -A backend worker -l info
+
+
+目前系统已经完成基本骨架，需要继续探索关于ci、cd 针对不同语言下面的模版，已经支持针对不用应用在不同stage的自定义，模版支持版本管理、应用的ci、cd支持版本管理。在测试环境时，cicd可以合并到一个流水线完成，针对准生产和生产环境，ci和cd需要分离，ci在互联网的jenkins，cd在政务网的jenkins，由于互联网和政务网是无法直接通信的，互联网jenkins的ci可以直接创建，针对政务网的cd，生产保存到系统可以下载配置文件及复制配置。针对此需求需要出详细的prd并存到醒目工程下
+
+### 4.1 标准化命名规范
+按照项目、模块、应用、环境的维度，对资源进行标准化命名。project和medicare不能有“-”字符。
+| 资源类型 | 命名格式 | 示例 |
+|----------|----------|------|
+| GitLab Group | `<project>` | `medicare` |
+| GitLab Subgroup | `<module>` | `payment` |
+| GitLab Repository | `<app>` | `service` |
+| 互联网Harbor项目 | `<project>-<module>` | `medicare-payment` |
+| 镜像名 | `<app>` | `service` |
+| 镜像标签 | `<version>-<environment>` | `1.2.3-uat` |
+| 政务网Jenkins任务 | `<project>/<module>/<app>/<env>` | `medicare/payment/service/uat` |
+| Ansible Inventory | `inventory/<project>/<module>/<app>/<env>` | `inventory/medicare/payment/service/uat` 
+
+
+
+我在梳理下逻辑，1、流水线模版是保存常见的语言cicd的jenkinsfile脚本，需要支持新增、修改、查看。修改保存时自动版本迭代。2、当创建应用时可以关联到流水线模版到cicd，保存应用时把cicd模版传递给jenkins，同时应用支持改变cicd并同步到Jenkins。 
+
+jenkins pipeline 模版管理的需求
+- 支持不同语言的流水线模版
+- 自动版本迭代
+- 关联应用时可传递模版到Jenkins
+- 支持应用变更模版并同步
+- 支持模版的版本管理
+- 支持模版的复制
+- 支持模版的导入
+- 支持模版的导出
+- 针对pipeline每个阶段的脚本独立修改
+
+
+问题1：创建新版本优化
+✅ 点击"创建新版本"时，自动生成下一个版本号（自动递增）
+✅ 版本号格式：基于最新版本号，递增最后一个数字（如 1.0.0 → 1.0.1）
+✅ 扩大了 Jenkinsfile 编辑框为 18 行
+✅ 表单布局优化，使用 Row/Col 栅格布局
+问题2：编辑 Stage 自动创建新版本
+✅ 保存 Stage 编辑后，自动创建新版本而不是修改原版本
+✅ 新版本号自动递增
+✅ 变更日志自动记录：编辑 Stage: xxx
+✅ 添加了提示信息："保存后将自动创建新版本（版本号自动递增），不会修改原版本"
+✅ 弹窗标题显示基于哪个版本编辑
+
+http://localhost:8083/git_add_group/sugroup_moudel/owner-05.git
+
+
+
+pipeline {
+    agent any
+    parameters {
+        string(name: 'PROJECT', defaultValue: 'git_add_group', description: '项目名称')
+        string(name: 'MODULE', defaultValue: 'sugroup_moudel', description: '模块名称')
+        string(name: 'APP', defaultValue: 'owner-05', description: '应用名称')
+        string(name: 'BRANCH', defaultValue: 'main', description: '代码分支')
+        string(name: 'VERSION', defaultValue: '', description: '版本号（可选）')
+    }
+    environment {
+        DOCKER_REGISTRY = 'https://192.168.3.134/'
+        GIT_REPO = "http://192.168.3.134:8083/${params.PROJECT}/${params.MODULE}/${params.APP}.git"
+        // 镜像全名：harbor.internet.com/medicare-payment/service:标签
+        IMAGE_BASE = "${DOCKER_REGISTRY}/${params.PROJECT}-${params.MODULE}/${params.APP}"
+    }
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: params.BRANCH, url: GIT_REPO,
+            credentialsId: 'gitlab-http-credentials'   // 你设置的 ID
+            }
+        }
+        stage('Determine Version and Tag') {
+            steps {
+                script {
+                    // 如果未传入 VERSION，从文件读取（仅主干或发布分支）
+                    if (!params.VERSION) {
+                        if (params.BRANCH == 'main' || params.BRANCH.startsWith('release/')) {
+                            def versionFile = readFile('VERSION').trim()
+                            currentBuild.displayName = "${versionFile}"
+                            env.VERSION = versionFile
+                        } else {
+                            env.VERSION = "test-${env.BUILD_ID}"
+                        }
+                    } else {
+                        env.VERSION = params.VERSION
+                    }
+                    
+                    // 根据分支确定镜像标签后缀
+                    if (params.BRANCH == 'develop' || params.BRANCH.startsWith('feature/')) {
+                        env.TAG_SUFFIX = 'test'
+                    } else if (params.BRANCH == 'main' || params.BRANCH.startsWith('release/')) {
+                        env.TAG_SUFFIX = 'uat'
+                    } else if (params.BRANCH.startsWith('hotfix/')) {
+                        env.TAG_SUFFIX = 'uat'   // 热修复先发布到UAT验证
+                    } else {
+                        env.TAG_SUFFIX = 'test'
+                    }
+                    
+                    env.FULL_TAG = "${env.VERSION}-${env.TAG_SUFFIX}"
+                    env.IMAGE = "${IMAGE_BASE}:${env.FULL_TAG}"
+                }
+            }
+        }
+        stage('Build & Test') {
+            steps {
+                <!-- sh 'mvn clean package'   // 示例，可根据实际语言调整 -->
+                sh 'mvn clean package'   // 示例，可根据实际语言调整
+            }
+        }
+        stage('Docker Build') {
+            steps {
+                sh "docker build -t ${IMAGE} ."
+            }
+        }
+                stage('Push to Harbor') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId:'7733a704-bda5-4bf1-a5d9-d5bc26e940e1', // 替换成你第一步中设置的ID
+                    passwordVariable: 'HARBOR_PASS', 
+                    usernameVariable: 'HARBOR_USER'
+                )]) {
+                    sh """
+                        # 使用从凭据注入的用户名和密码登录
+                        docker login ${DOCKER_REGISTRY} -u ${HARBOR_USER} -p ${HARBOR_PASS}
+                        docker push ${IMAGE}
+                        # 可选：登出，清理本地凭证
+                        docker logout ${DOCKER_REGISTRY}
+                    """
+                }
+            }
+        }
+    }
+}
+
+
+在应用上面怎么加发布按钮、发布多模态框支持选择不同的分支、支持选择不同的环境、支持选择审批，并自定义审批人，确定后弹出发布信息确认框，确认后触发jenkins的job构建。发布记录需要记录在当前系统以便审计，Jenkins job的构建日志需要记录在本系统，先出简版的prd文档，核心是把逻辑关系理清楚，包括前端和后端的实现
+
+
+发布需要考虑是否有sql执行，可以规定固定存放目录，在发布是记录到发布日志，方便回滚是dba进行处理。
