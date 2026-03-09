@@ -104,7 +104,12 @@ class ApplicationViewSet(CustomModelViewSet):
         Returns:
             GitLab Project ID 或 None
         """
+        from django.utils import timezone
+
         try:
+            app.gitlab_sync_status = 1
+            app.save(update_fields=['gitlab_sync_status'])
+
             gitlab = GitLabService()
             result = gitlab.create_project(
                 name=app.name,
@@ -113,12 +118,13 @@ class ApplicationViewSet(CustomModelViewSet):
                 description=app.description
             )
 
-            # 更新应用
             app.gitlab_project_id = result.get("id")
             app.git_url = result.get("ssh_url_to_repo") or result.get("http_url_to_repo")
-            app.save(update_fields=["gitlab_project_id", "git_url"])
+            app.gitlab_sync_status = 2
+            app.gitlab_sync_time = timezone.now()
+            app.gitlab_sync_message = "创建成功"
+            app.save(update_fields=["gitlab_project_id", "git_url", "gitlab_sync_status", "gitlab_sync_time", "gitlab_sync_message"])
 
-            # 记录日志
             SyncLog.objects.create(
                 project=app.project,
                 module=app.module,
@@ -135,6 +141,9 @@ class ApplicationViewSet(CustomModelViewSet):
 
         except DevOpsException as e:
             logger.error(f"应用 {app.name} GitLab Project 创建失败: {e.message}")
+            app.gitlab_sync_status = 3
+            app.gitlab_sync_message = e.message
+            app.save(update_fields=['gitlab_sync_status', 'gitlab_sync_message'])
             SyncLog.objects.create(
                 project=app.project,
                 module=app.module,
@@ -148,6 +157,9 @@ class ApplicationViewSet(CustomModelViewSet):
             return None
         except Exception as e:
             logger.exception(f"应用 {app.name} GitLab Project 创建异常: {e}")
+            app.gitlab_sync_status = 3
+            app.gitlab_sync_message = str(e)[:512]
+            app.save(update_fields=['gitlab_sync_status', 'gitlab_sync_message'])
             return None
 
     def perform_update(self, serializer):
@@ -212,26 +224,30 @@ class ApplicationViewSet(CustomModelViewSet):
         """手动同步所有资源"""
         app = self.get_object()
         resource_type = request.data.get("type", "all")
+        force = request.data.get("force", False)
 
         results = {}
 
         if resource_type in ["all", "gitlab"]:
-            if not app.gitlab_project_id and app.module.gitlab_subgroup_id:
-                task = create_gitlab_resources.delay(app.id)
+            if not app.gitlab_project_id or app.gitlab_sync_status == 3 or force:
+                task = create_gitlab_resources.delay(app.id, force)
                 results["gitlab"] = {"task_id": task.id}
             else:
                 results["gitlab"] = {"skipped": True, "reason": "exists or no_subgroup"}
 
         if resource_type in ["all", "jenkins"]:
-            if not app.jenkins_ci_job and app.git_url:
-                task = create_jenkins_resources.delay(app.id)
-                results["jenkins"] = {"task_id": task.id}
+            if not app.jenkins_ci_job or app.jenkins_sync_status == 3 or force:
+                if app.git_url:
+                    task = create_jenkins_resources.delay(app.id, force)
+                    results["jenkins"] = {"task_id": task.id}
+                else:
+                    results["jenkins"] = {"skipped": True, "reason": "no_git_url"}
             else:
-                results["jenkins"] = {"skipped": True, "reason": "exists or no_git_url"}
+                results["jenkins"] = {"skipped": True, "reason": "exists"}
 
         if resource_type in ["all", "harbor"]:
-            if not app.harbor_project:
-                task = create_harbor_resources.delay(app.id)
+            if not app.harbor_project or app.harbor_sync_status == 3 or force:
+                task = create_harbor_resources.delay(app.id, force)
                 results["harbor"] = {"task_id": task.id}
             else:
                 results["harbor"] = {"skipped": True, "reason": "exists"}
@@ -240,6 +256,78 @@ class ApplicationViewSet(CustomModelViewSet):
             "code": 0,
             "message": "资源同步任务已提交",
             "data": results
+        })
+
+    @action(detail=True, methods=["post"])
+    def sync_gitlab(self, request, pk=None):
+        """手动同步 GitLab 资源"""
+        app = self.get_object()
+        force = request.data.get("force", False)
+
+        if not app.module.gitlab_subgroup_id:
+            return Response({
+                "code": 1,
+                "message": "所属模块没有 GitLab Subgroup ID，无法创建 GitLab 项目"
+            }, status=400)
+
+        if app.gitlab_project_id and app.gitlab_sync_status != 3 and not force:
+            return Response({
+                "code": 1,
+                "message": "GitLab 项目已存在，如需重新创建请使用 force=true"
+            }, status=400)
+
+        task = create_gitlab_resources.delay(app.id, force)
+
+        return Response({
+            "code": 0,
+            "message": "GitLab 同步任务已提交",
+            "data": {"task_id": task.id}
+        })
+
+    @action(detail=True, methods=["post"])
+    def sync_jenkins(self, request, pk=None):
+        """手动同步 Jenkins 资源"""
+        app = self.get_object()
+        force = request.data.get("force", False)
+
+        if not app.git_url:
+            return Response({
+                "code": 1,
+                "message": "应用没有 Git 仓库地址，无法创建 Jenkins Job"
+            }, status=400)
+
+        if app.jenkins_ci_job and app.jenkins_sync_status != 3 and not force:
+            return Response({
+                "code": 1,
+                "message": "Jenkins Job 已存在，如需重新创建请使用 force=true"
+            }, status=400)
+
+        task = create_jenkins_resources.delay(app.id, force)
+
+        return Response({
+            "code": 0,
+            "message": "Jenkins 同步任务已提交",
+            "data": {"task_id": task.id}
+        })
+
+    @action(detail=True, methods=["post"])
+    def sync_harbor(self, request, pk=None):
+        """手动同步 Harbor 资源"""
+        app = self.get_object()
+        force = request.data.get("force", False)
+
+        if app.harbor_project and app.harbor_sync_status != 3 and not force:
+            return Response({
+                "code": 1,
+                "message": "Harbor 项目已存在，如需重新创建请使用 force=true"
+            }, status=400)
+
+        task = create_harbor_resources.delay(app.id, force)
+
+        return Response({
+            "code": 0,
+            "message": "Harbor 同步任务已提交",
+            "data": {"task_id": task.id}
         })
 
     @action(detail=True, methods=["get"])
@@ -253,16 +341,25 @@ class ApplicationViewSet(CustomModelViewSet):
                 "gitlab": {
                     "project_id": app.gitlab_project_id,
                     "git_url": app.git_url,
-                    "status": "created" if app.gitlab_project_id else "pending"
+                    "status": app.get_gitlab_sync_status_display(),
+                    "sync_status": app.gitlab_sync_status,
+                    "sync_time": app.gitlab_sync_time,
+                    "sync_message": app.gitlab_sync_message,
                 },
                 "jenkins": {
                     "ci_job": app.jenkins_ci_job,
                     "cd_job": app.jenkins_cd_job,
-                    "status": "created" if app.jenkins_ci_job else "pending"
+                    "status": app.get_jenkins_sync_status_display(),
+                    "sync_status": app.jenkins_sync_status,
+                    "sync_time": app.jenkins_sync_time,
+                    "sync_message": app.jenkins_sync_message,
                 },
                 "harbor": {
                     "project": app.harbor_project,
-                    "status": "created" if app.harbor_project else "pending"
+                    "status": app.get_harbor_sync_status_display(),
+                    "sync_status": app.harbor_sync_status,
+                    "sync_time": app.harbor_sync_time,
+                    "sync_message": app.harbor_sync_message,
                 }
             }
         })

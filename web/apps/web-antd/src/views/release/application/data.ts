@@ -325,16 +325,22 @@ export function useColumns(
       slots: { default: 'cicd_templates' },
     },
     {
+      title: 'GitLab 同步',
+      width: 100,
+      align: 'center',
+      slots: { default: 'gitlab_sync' },
+    },
+    {
       title: 'Jenkins 同步',
       width: 100,
       align: 'center',
       slots: { default: 'jenkins_sync' },
     },
     {
-      title: 'DevOps资源',
-      width: 180,
+      title: 'Harbor 同步',
+      width: 100,
       align: 'center',
-      slots: { default: 'devops_resources' },
+      slots: { default: 'harbor_sync' },
     },
     {
       cellRender: { name: 'CellTag' },
@@ -375,10 +381,12 @@ export function useColumns(
         name: 'CellOperation',
         options: [
           op('release:application:release', { code: 'release', text: '发布', type: 'primary' }),
-          op('release:application:edit', 'edit'),
-          op('release:application:sync-jenkins', { code: 'sync-jenkins', text: '同步 Jenkins' }),
-          op('release:application:sync-resources', { code: 'sync-resources', text: '同步资源' }),
-          op('release:application:delete', 'delete'),
+          op('release:application:update', { code: 'edit', text: '编辑' }),
+          op('release:application:sync-jenkins', { code: 'sync-jenkins', text: '同步 CI/CD' }),
+          op('release:application:sync-gitlab', { code: 'sync-gitlab', text: 'GitLab' }),
+          op('release:application:sync-jenkins-resource', { code: 'sync-jenkins-resource', text: 'Jenkins' }),
+          op('release:application:sync-harbor', { code: 'sync-harbor', text: 'Harbor' }),
+          op('release:application:delete', { code: 'delete', text: '删除', danger: true }),
         ],
       },
       field: 'operation',
@@ -386,7 +394,7 @@ export function useColumns(
       headerAlign: 'center',
       showOverflow: false,
       title: '操作',
-      width: 320,
+      width: 420,
     },
   ];
 }

@@ -41,6 +41,16 @@ export namespace ReleaseApplicationApi {
     jenkins_sync_status_display?: string;
     jenkins_sync_time?: string;
     jenkins_sync_message?: string;
+    // GitLab 同步状态
+    gitlab_sync_status: 0 | 1 | 2 | 3;
+    gitlab_sync_status_display?: string;
+    gitlab_sync_time?: string;
+    gitlab_sync_message?: string;
+    // Harbor 同步状态
+    harbor_sync_status: 0 | 1 | 2 | 3;
+    harbor_sync_status_display?: string;
+    harbor_sync_time?: string;
+    harbor_sync_message?: string;
     status: 0 | 1;
     status_display?: string;
     sort: number;
@@ -69,6 +79,32 @@ export namespace ReleaseApplicationApi {
     sync_message?: string;
     ci_template?: string;
     cd_template?: string;
+  }
+
+  export interface ResourceStatus {
+    gitlab: {
+      project_id?: number;
+      git_url?: string;
+      status: string;
+      sync_status: number;
+      sync_time?: string;
+      sync_message?: string;
+    };
+    jenkins: {
+      ci_job?: string;
+      cd_job?: string;
+      status: string;
+      sync_status: number;
+      sync_time?: string;
+      sync_message?: string;
+    };
+    harbor: {
+      project?: string;
+      status: string;
+      sync_status: number;
+      sync_time?: string;
+      sync_message?: string;
+    };
   }
 
   export interface JenkinsfilePreview {
@@ -140,19 +176,36 @@ async function generateConfig(id: number, version?: string) {
 /**
  * 同步资源
  */
-async function syncResources(id: number, type?: string) {
-  return requestClient.post(`/release/application/${id}/sync_resources/`, { type });
+async function syncResources(id: number, type?: string, force?: boolean) {
+  return requestClient.post(`/release/application/${id}/sync_resources/`, { type, force: force || false });
+}
+
+/**
+ * 单独同步 GitLab 资源
+ */
+async function syncGitlab(id: number, force?: boolean) {
+  return requestClient.post(`/release/application/${id}/sync_gitlab/`, { force: force || false });
+}
+
+/**
+ * 单独同步 Jenkins 资源
+ */
+async function syncJenkins(id: number, force?: boolean) {
+  return requestClient.post(`/release/application/${id}/sync_jenkins/`, { force: force || false });
+}
+
+/**
+ * 单独同步 Harbor 资源
+ */
+async function syncHarbor(id: number, force?: boolean) {
+  return requestClient.post(`/release/application/${id}/sync_harbor/`, { force: force || false });
 }
 
 /**
  * 获取资源状态
  */
 async function getResourceStatus(id: number) {
-  return requestClient.get<{
-    gitlab: { project_id?: number; git_url?: string; status: string };
-    jenkins: { ci_job?: string; cd_job?: string; status: string };
-    harbor: { project?: string; status: string };
-  }>(`/release/application/${id}/resource_status/`);
+  return requestClient.get<ReleaseApplicationApi.ResourceStatus>(`/release/application/${id}/resource_status/`);
 }
 
 /**
@@ -189,6 +242,9 @@ export {
   getJenkinsSyncStatus,
   getResourceStatus,
   previewJenkinsfile,
+  syncGitlab,
+  syncHarbor,
+  syncJenkins,
   syncResources,
   syncToJenkins,
   updateApplication,

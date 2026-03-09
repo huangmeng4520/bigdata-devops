@@ -77,6 +77,20 @@ class Application(CoreModel):
         (3, "同步失败"),
     ]
 
+    GITLAB_SYNC_STATUS_CHOICES = [
+        (0, "待同步"),
+        (1, "同步中"),
+        (2, "已同步"),
+        (3, "同步失败"),
+    ]
+
+    HARBOR_SYNC_STATUS_CHOICES = [
+        (0, "待同步"),
+        (1, "同步中"),
+        (2, "已同步"),
+        (3, "同步失败"),
+    ]
+
     project = models.ForeignKey(
         Project, on_delete=models.CASCADE,
         related_name="applications", verbose_name="所属项目"
@@ -117,6 +131,22 @@ class Application(CoreModel):
     )
     jenkins_sync_time = models.DateTimeField(null=True, blank=True, verbose_name="最后同步时间")
     jenkins_sync_message = models.CharField(max_length=512, null=True, blank=True, verbose_name="同步消息")
+    # GitLab 同步状态
+    gitlab_sync_status = models.IntegerField(
+        choices=GITLAB_SYNC_STATUS_CHOICES,
+        default=0,
+        verbose_name="GitLab 同步状态"
+    )
+    gitlab_sync_time = models.DateTimeField(null=True, blank=True, verbose_name="GitLab 最后同步时间")
+    gitlab_sync_message = models.CharField(max_length=512, null=True, blank=True, verbose_name="GitLab 同步消息")
+    # Harbor 同步状态
+    harbor_sync_status = models.IntegerField(
+        choices=HARBOR_SYNC_STATUS_CHOICES,
+        default=0,
+        verbose_name="Harbor 同步状态"
+    )
+    harbor_sync_time = models.DateTimeField(null=True, blank=True, verbose_name="Harbor 最后同步时间")
+    harbor_sync_message = models.CharField(max_length=512, null=True, blank=True, verbose_name="Harbor 同步消息")
     status = models.IntegerField(
         choices=CommonStatus.choices,
         default=CommonStatus.ENABLED,

@@ -254,16 +254,65 @@ def trigger_release(request, app_id):
 
     # 如果不需要审批，直接触发构建
     if not require_approval:
+        from ..services import JenkinsService, DevOpsException
+
+        # 先同步检查 Jenkins 是否可用
+        try:
+            jenkins = JenkinsService()
+            if not jenkins.test_connection():
+                release.status = 'build_failed'
+                release.status_message = 'Jenkins 服务不可用，请检查配置'
+                release.save(update_fields=['status', 'status_message'])
+                return Response({
+                    "code": 1,
+                    "data": {
+                        "id": release.id,
+                        "status": "build_failed",
+                        "status_display": release.get_status_display(),
+                        "message": "Jenkins 服务不可用，请检查配置"
+                    }
+                })
+        except DevOpsException as e:
+            release.status = 'build_failed'
+            release.status_message = f'Jenkins 连接失败: {e.message}'
+            release.save(update_fields=['status', 'status_message'])
+            return Response({
+                "code": 1,
+                "data": {
+                    "id": release.id,
+                    "status": "build_failed",
+                    "status_display": release.get_status_display(),
+                    "message": f"Jenkins 连接失败: {e.message}"
+                }
+            })
+
+        # 触发异步构建
         from ..tasks import trigger_jenkins_build
-        trigger_jenkins_build.delay(release.id)
-        release.status = 'building'
-        release.save(update_fields=['status'])
+        try:
+            trigger_jenkins_build.delay(release.id)
+            release.status = 'building'
+            release.save(update_fields=['status'])
+            status = 'building'
+            message = '发布已创建，构建已触发'
+        except Exception as e:
+            # Jenkins/Celery 服务异常
+            release.status = 'build_failed'
+            release.status_message = f'触发构建失败: {str(e)}'
+            release.save(update_fields=['status', 'status_message'])
+            status = 'build_failed'
+            message = f'发布已创建，但触发构建失败: {str(e)}'
+    else:
+        status = 'approval_pending'
+        message = '发布已创建，等待审批'
 
     return Response({
-        "id": release.id,
-        "status": release.status,
-        "status_display": release.get_status_display(),
-        "message": "发布已创建" + ("，等待审批" if require_approval else "，构建已触发")
+        "code": 0,
+        "data": {
+            "id": release.id,
+            "status": status,
+            "status_display": release.get_status_display(),
+            "message": message
+        }
     })
 
 

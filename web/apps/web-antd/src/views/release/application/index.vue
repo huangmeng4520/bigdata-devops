@@ -18,6 +18,9 @@ import {
   deleteApplication,
   getApplicationList,
   getProjectList,
+  syncGitlab,
+  syncHarbor,
+  syncJenkins,
   syncResources,
   syncToJenkins,
 } from '#/api/release';
@@ -99,10 +102,76 @@ function onSyncResources(row: ReleaseApplicationApi.Application) {
     duration: 0,
     key: 'action_process_msg',
   });
-  syncResources(row.id)
+  syncResources(row.id, 'all', false)
     .then(() => {
       message.success({
-        content: `${row.name} 的资源同步成功`,
+        content: `${row.name} 的资源同步任务已提交`,
+        key: 'action_process_msg',
+      });
+      refreshGrid();
+    })
+    .catch(() => {
+      hideLoading();
+    });
+}
+
+/**
+ * 同步 GitLab
+ */
+function onSyncGitlab(row: ReleaseApplicationApi.Application) {
+  const hideLoading = message.loading({
+    content: `正在同步 ${row.name} 的 GitLab 资源...`,
+    duration: 0,
+    key: 'action_process_msg',
+  });
+  syncGitlab(row.id, false)
+    .then(() => {
+      message.success({
+        content: `${row.name} 的 GitLab 同步任务已提交`,
+        key: 'action_process_msg',
+      });
+      refreshGrid();
+    })
+    .catch(() => {
+      hideLoading();
+    });
+}
+
+/**
+ * 同步 Jenkins
+ */
+function onSyncJenkinsResource(row: ReleaseApplicationApi.Application) {
+  const hideLoading = message.loading({
+    content: `正在同步 ${row.name} 的 Jenkins 资源...`,
+    duration: 0,
+    key: 'action_process_msg',
+  });
+  syncJenkins(row.id, false)
+    .then(() => {
+      message.success({
+        content: `${row.name} 的 Jenkins 同步任务已提交`,
+        key: 'action_process_msg',
+      });
+      refreshGrid();
+    })
+    .catch(() => {
+      hideLoading();
+    });
+}
+
+/**
+ * 同步 Harbor
+ */
+function onSyncHarbor(row: ReleaseApplicationApi.Application) {
+  const hideLoading = message.loading({
+    content: `正在同步 ${row.name} 的 Harbor 资源...`,
+    duration: 0,
+    key: 'action_process_msg',
+  });
+  syncHarbor(row.id, false)
+    .then(() => {
+      message.success({
+        content: `${row.name} 的 Harbor 同步任务已提交`,
         key: 'action_process_msg',
       });
       refreshGrid();
@@ -158,6 +227,18 @@ function onActionClick({
     }
     case 'sync-resources': {
       onSyncResources(row);
+      break;
+    }
+    case 'sync-gitlab': {
+      onSyncGitlab(row);
+      break;
+    }
+    case 'sync-jenkins-resource': {
+      onSyncJenkinsResource(row);
+      break;
+    }
+    case 'sync-harbor': {
+      onSyncHarbor(row);
       break;
     }
     case 'sync-jenkins': {
@@ -245,6 +326,36 @@ const SYNC_STATUS_TEXT: Record<number, string> = {
   2: '已同步',
   3: '同步失败',
 };
+
+// GitLab 同步状态颜色
+const GITLAB_SYNC_STATUS_COLORS: Record<number, string> = {
+  0: 'default',
+  1: 'processing',
+  2: 'success',
+  3: 'error',
+};
+
+const GITLAB_SYNC_STATUS_TEXT: Record<number, string> = {
+  0: '待同步',
+  1: '同步中',
+  2: '已同步',
+  3: '同步失败',
+};
+
+// Harbor 同步状态颜色
+const HARBOR_SYNC_STATUS_COLORS: Record<number, string> = {
+  0: 'default',
+  1: 'processing',
+  2: 'success',
+  3: 'error',
+};
+
+const HARBOR_SYNC_STATUS_TEXT: Record<number, string> = {
+  0: '待同步',
+  1: '同步中',
+  2: '已同步',
+  3: '同步失败',
+};
 </script>
 
 <template>
@@ -282,6 +393,15 @@ const SYNC_STATUS_TEXT: Record<number, string> = {
         </div>
       </template>
 
+      <!-- GitLab 同步状态 -->
+      <template #gitlab_sync="{ row }">
+        <Tooltip :title="row.gitlab_sync_message || GITLAB_SYNC_STATUS_TEXT[row.gitlab_sync_status]">
+          <Tag :color="GITLAB_SYNC_STATUS_COLORS[row.gitlab_sync_status]">
+            {{ GITLAB_SYNC_STATUS_TEXT[row.gitlab_sync_status] }}
+          </Tag>
+        </Tooltip>
+      </template>
+
       <!-- Jenkins 同步状态 -->
       <template #jenkins_sync="{ row }">
         <Tooltip :title="row.jenkins_sync_message || SYNC_STATUS_TEXT[row.jenkins_sync_status]">
@@ -291,25 +411,13 @@ const SYNC_STATUS_TEXT: Record<number, string> = {
         </Tooltip>
       </template>
 
-      <!-- DevOps 资源状态 -->
-      <template #devops_resources="{ row }">
-        <div style="display: flex; gap: 4px; justify-content: center; flex-wrap: wrap;">
-          <Tooltip :title="row.gitlab_project_id ? 'GitLab 项目已创建' : 'GitLab 项目未创建'">
-            <Tag :color="row.gitlab_project_id ? 'success' : 'default'">
-              GitLab
-            </Tag>
-          </Tooltip>
-          <Tooltip :title="row.jenkins_ci_job || row.jenkins_cd_job ? 'Jenkins Job 已创建' : 'Jenkins Job 未创建'">
-            <Tag :color="row.jenkins_ci_job || row.jenkins_cd_job ? 'success' : 'default'">
-              Jenkins
-            </Tag>
-          </Tooltip>
-          <Tooltip :title="row.harbor_project ? 'Harbor 项目已创建' : 'Harbor 项目未创建'">
-            <Tag :color="row.harbor_project ? 'success' : 'default'">
-              Harbor
-            </Tag>
-          </Tooltip>
-        </div>
+      <!-- Harbor 同步状态 -->
+      <template #harbor_sync="{ row }">
+        <Tooltip :title="row.harbor_sync_message || HARBOR_SYNC_STATUS_TEXT[row.harbor_sync_status]">
+          <Tag :color="HARBOR_SYNC_STATUS_COLORS[row.harbor_sync_status]">
+            {{ HARBOR_SYNC_STATUS_TEXT[row.harbor_sync_status] }}
+          </Tag>
+        </Tooltip>
       </template>
     </Grid>
   </Page>

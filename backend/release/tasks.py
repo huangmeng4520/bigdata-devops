@@ -10,17 +10,19 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
-def create_gitlab_resources(self, app_id: int):
+def create_gitlab_resources(self, app_id: int, force: bool = False):
     """
     创建 GitLab 资源的异步任务
 
     Args:
         app_id: 应用 ID
+        force: 是否强制重新创建
     """
+    from django.utils import timezone
     from .models import Application, SyncLog
     from .services import GitLabService, DevOpsException
 
-    logger.info(f"[Celery] 开始创建 GitLab 资源: app_id={app_id}")
+    logger.info(f"[Celery] 开始创建 GitLab 资源: app_id={app_id}, force={force}")
 
     try:
         app = Application.objects.select_related("project", "module").get(pk=app_id)
@@ -31,18 +33,31 @@ def create_gitlab_resources(self, app_id: int):
     gitlab = GitLabService()
 
     try:
-        # 如果已有 gitlab_project_id，跳过
+        app.gitlab_sync_status = 1
+        app.save(update_fields=['gitlab_sync_status'])
+
+        if force and app.gitlab_project_id:
+            app.gitlab_project_id = None
+            app.git_url = None
+            app.save(update_fields=['gitlab_project_id', 'git_url'])
+            logger.info(f"[Celery] 强制重新创建，清除现有 GitLab Project")
+
         if app.gitlab_project_id:
             logger.info(f"[Celery] GitLab Project 已存在: {app.gitlab_project_id}")
+            app.gitlab_sync_status = 2
+            app.gitlab_sync_time = timezone.now()
+            app.gitlab_sync_message = "GitLab Project 已存在"
+            app.save(update_fields=['gitlab_sync_status', 'gitlab_sync_time', 'gitlab_sync_message'])
             return {"success": True, "skipped": True, "reason": "project_exists"}
 
-        # 获取 Subgroup ID
         subgroup_id = app.module.gitlab_subgroup_id
         if not subgroup_id:
             logger.warning(f"[Celery] 模块没有 GitLab Subgroup ID")
+            app.gitlab_sync_status = 3
+            app.gitlab_sync_message = "模块没有 GitLab Subgroup ID"
+            app.save(update_fields=['gitlab_sync_status', 'gitlab_sync_message'])
             return {"success": False, "error": "no_subgroup"}
 
-        # 创建 Project
         project = gitlab.create_project(
             name=app.name,
             path=app.code,
@@ -50,13 +65,14 @@ def create_gitlab_resources(self, app_id: int):
             description=app.description
         )
 
-        # 更新应用
         with transaction.atomic():
             app.gitlab_project_id = project["id"]
             app.git_url = project.get("ssh_url_to_repo") or project.get("http_url_to_repo")
-            app.save(update_fields=["gitlab_project_id", "git_url"])
+            app.gitlab_sync_status = 2
+            app.gitlab_sync_time = timezone.now()
+            app.gitlab_sync_message = "创建成功"
+            app.save(update_fields=["gitlab_project_id", "git_url", "gitlab_sync_status", "gitlab_sync_time", "gitlab_sync_message"])
 
-        # 记录日志
         SyncLog.objects.create(
             app=app,
             project=app.project,
@@ -74,7 +90,10 @@ def create_gitlab_resources(self, app_id: int):
     except DevOpsException as e:
         logger.error(f"[Celery] GitLab 资源创建失败: {e.message}")
 
-        # 记录失败日志
+        app.gitlab_sync_status = 3
+        app.gitlab_sync_message = e.message
+        app.save(update_fields=['gitlab_sync_status', 'gitlab_sync_message'])
+
         SyncLog.objects.create(
             app_id=app_id,
             sync_type="gitlab",
@@ -84,25 +103,29 @@ def create_gitlab_resources(self, app_id: int):
             message=e.message
         )
 
-        # 重试
         raise self.retry(exc=e)
     except Exception as e:
         logger.exception(f"[Celery] GitLab 资源创建异常: {e}")
+        app.gitlab_sync_status = 3
+        app.gitlab_sync_message = str(e)[:512]
+        app.save(update_fields=['gitlab_sync_status', 'gitlab_sync_message'])
         return {"success": False, "error": str(e)}
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
-def create_jenkins_resources(self, app_id: int):
+def create_jenkins_resources(self, app_id: int, force: bool = False):
     """
     创建 Jenkins 资源的异步任务
 
     Args:
         app_id: 应用 ID
+        force: 是否强制重新创建
     """
+    from django.utils import timezone
     from .models import Application, SyncLog
     from .services import JenkinsService, DevOpsException
 
-    logger.info(f"[Celery] 开始创建 Jenkins 资源: app_id={app_id}")
+    logger.info(f"[Celery] 开始创建 Jenkins 资源: app_id={app_id}, force={force}")
 
     try:
         app = Application.objects.select_related("project", "module").get(pk=app_id)
@@ -113,17 +136,30 @@ def create_jenkins_resources(self, app_id: int):
     jenkins = JenkinsService()
 
     try:
-        # 如果已有 jenkins_ci_job，跳过
+        app.jenkins_sync_status = 1
+        app.save(update_fields=['jenkins_sync_status'])
+
+        if force and app.jenkins_ci_job:
+            app.jenkins_ci_job = None
+            app.jenkins_cd_job = None
+            app.save(update_fields=['jenkins_ci_job', 'jenkins_cd_job'])
+            logger.info(f"[Celery] 强制重新创建，清除现有 Jenkins Jobs")
+
         if app.jenkins_ci_job:
             logger.info(f"[Celery] Jenkins Jobs 已存在: {app.jenkins_ci_job}")
+            app.jenkins_sync_status = 2
+            app.jenkins_sync_time = timezone.now()
+            app.jenkins_sync_message = "Jenkins Jobs 已存在"
+            app.save(update_fields=['jenkins_sync_status', 'jenkins_sync_time', 'jenkins_sync_message'])
             return {"success": True, "skipped": True, "reason": "jobs_exist"}
 
-        # 检查 Git URL
         if not app.git_url:
             logger.warning(f"[Celery] 应用没有 Git URL")
+            app.jenkins_sync_status = 3
+            app.jenkins_sync_message = "应用没有 Git 仓库地址"
+            app.save(update_fields=['jenkins_sync_status', 'jenkins_sync_message'])
             return {"success": False, "error": "no_git_url"}
 
-        # 创建 CI/CD Jobs
         results = jenkins.create_ci_cd_jobs(
             project_code=app.project.code,
             module_code=app.module.code,
@@ -132,7 +168,6 @@ def create_jenkins_resources(self, app_id: int):
             branch=app.build_branch
         )
 
-        # 更新应用
         with transaction.atomic():
             app.jenkins_ci_job = jenkins.get_job_full_name(
                 app.project.code, app.module.code, app.code, "ci"
@@ -140,9 +175,11 @@ def create_jenkins_resources(self, app_id: int):
             app.jenkins_cd_job = jenkins.get_job_full_name(
                 app.project.code, app.module.code, app.code, "cd"
             )
-            app.save(update_fields=["jenkins_ci_job", "jenkins_cd_job"])
+            app.jenkins_sync_status = 2
+            app.jenkins_sync_time = timezone.now()
+            app.jenkins_sync_message = "创建成功"
+            app.save(update_fields=["jenkins_ci_job", "jenkins_cd_job", "jenkins_sync_status", "jenkins_sync_time", "jenkins_sync_message"])
 
-        # 记录日志
         SyncLog.objects.create(
             app=app,
             project=app.project,
@@ -160,6 +197,10 @@ def create_jenkins_resources(self, app_id: int):
     except DevOpsException as e:
         logger.error(f"[Celery] Jenkins 资源创建失败: {e.message}")
 
+        app.jenkins_sync_status = 3
+        app.jenkins_sync_message = e.message
+        app.save(update_fields=['jenkins_sync_status', 'jenkins_sync_message'])
+
         SyncLog.objects.create(
             app_id=app_id,
             sync_type="jenkins",
@@ -172,21 +213,26 @@ def create_jenkins_resources(self, app_id: int):
         raise self.retry(exc=e)
     except Exception as e:
         logger.exception(f"[Celery] Jenkins 资源创建异常: {e}")
+        app.jenkins_sync_status = 3
+        app.jenkins_sync_message = str(e)[:512]
+        app.save(update_fields=['jenkins_sync_status', 'jenkins_sync_message'])
         return {"success": False, "error": str(e)}
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
-def create_harbor_resources(self, app_id: int):
+def create_harbor_resources(self, app_id: int, force: bool = False):
     """
     创建 Harbor 资源的异步任务
 
     Args:
         app_id: 应用 ID
+        force: 是否强制重新创建
     """
+    from django.utils import timezone
     from .models import Application, SyncLog
     from .services import HarborService, DevOpsException
 
-    logger.info(f"[Celery] 开始创建 Harbor 资源: app_id={app_id}")
+    logger.info(f"[Celery] 开始创建 Harbor 资源: app_id={app_id}, force={force}")
 
     try:
         app = Application.objects.select_related("project", "module").get(pk=app_id)
@@ -197,21 +243,32 @@ def create_harbor_resources(self, app_id: int):
     harbor = HarborService()
 
     try:
-        # 如果已有 harbor_project，跳过
+        app.harbor_sync_status = 1
+        app.save(update_fields=['harbor_sync_status'])
+
+        if force and app.harbor_project:
+            app.harbor_project = None
+            app.save(update_fields=['harbor_project'])
+            logger.info(f"[Celery] 强制重新创建，清除现有 Harbor Project")
+
         if app.harbor_project:
             logger.info(f"[Celery] Harbor Project 已存在: {app.harbor_project}")
+            app.harbor_sync_status = 2
+            app.harbor_sync_time = timezone.now()
+            app.harbor_sync_message = "Harbor Project 已存在"
+            app.save(update_fields=['harbor_sync_status', 'harbor_sync_time', 'harbor_sync_message'])
             return {"success": True, "skipped": True, "reason": "project_exists"}
 
-        # 创建 Harbor Project（使用 project_code-module_code 作为名称）
         project_name = f"{app.project.code}-{app.module.code}"
         project = harbor.create_project(project_name)
 
-        # 更新应用
         with transaction.atomic():
             app.harbor_project = project_name
-            app.save(update_fields=["harbor_project"])
+            app.harbor_sync_status = 2
+            app.harbor_sync_time = timezone.now()
+            app.harbor_sync_message = "创建成功"
+            app.save(update_fields=["harbor_project", "harbor_sync_status", "harbor_sync_time", "harbor_sync_message"])
 
-        # 记录日志
         SyncLog.objects.create(
             app=app,
             project=app.project,
@@ -229,6 +286,10 @@ def create_harbor_resources(self, app_id: int):
     except DevOpsException as e:
         logger.error(f"[Celery] Harbor 资源创建失败: {e.message}")
 
+        app.harbor_sync_status = 3
+        app.harbor_sync_message = e.message
+        app.save(update_fields=['harbor_sync_status', 'harbor_sync_message'])
+
         SyncLog.objects.create(
             app_id=app_id,
             sync_type="harbor",
@@ -241,6 +302,9 @@ def create_harbor_resources(self, app_id: int):
         raise self.retry(exc=e)
     except Exception as e:
         logger.exception(f"[Celery] Harbor 资源创建异常: {e}")
+        app.harbor_sync_status = 3
+        app.harbor_sync_message = str(e)[:512]
+        app.save(update_fields=['harbor_sync_status', 'harbor_sync_message'])
         return {"success": False, "error": str(e)}
 
 
@@ -600,16 +664,46 @@ def trigger_jenkins_build(self, release_id: int):
 
         jenkins = JenkinsService()
 
+        # 检查必要参数
+        if not application.project or not application.project.code:
+            release.status = 'build_failed'
+            release.status_message = "应用所属项目信息不完整，无法触发构建"
+            release.save(update_fields=['status', 'status_message'])
+            return {"success": False, "error": "应用所属项目信息不完整"}
+
+        if not application.module or not application.module.code:
+            release.status = 'build_failed'
+            release.status_message = "应用所属模块信息不完整，无法触发构建"
+            release.save(update_fields=['status', 'status_message'])
+            return {"success": False, "error": "应用所属模块信息不完整"}
+
+        if not application.code:
+            release.status = 'build_failed'
+            release.status_message = "应用编码不存在，无法触发构建"
+            release.save(update_fields=['status', 'status_message'])
+            return {"success": False, "error": "应用编码不存在"}
+
+        if not release.branch:
+            release.status = 'build_failed'
+            release.status_message = "发布分支不能为空"
+            release.save(update_fields=['status', 'status_message'])
+            return {"success": False, "error": "发布分支不能为空"}
+
+        if not release.environment:
+            release.status = 'build_failed'
+            release.status_message = "发布环境不能为空"
+            release.save(update_fields=['status', 'status_message'])
+            return {"success": False, "error": "发布环境不能为空"}
+
         # 构建参数 - 完整的 Jenkins Job 参数
         parameters = {
-            'PROJECT': application.project.code if application.project else '',
-            'MODULE': application.module.code if application.module else '',
+            'PROJECT': application.project.code,
+            'MODULE': application.module.code,
             'APP': application.code,
             'BRANCH': release.branch,
-            'ENVIRONMENT': release.environment or '',
+            'VERSION': release.version or '',
+            'ENVIRONMENT': release.environment,
         }
-        if release.version:
-            parameters['VERSION'] = release.version
 
         logger.info(f"[Celery] 构建参数: {parameters}")
 

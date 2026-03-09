@@ -68,6 +68,8 @@ class ApplicationSerializer(serializers.ModelSerializer):
     ci_template_name = serializers.CharField(source="ci_template.name", read_only=True)
     cd_template_name = serializers.CharField(source="cd_template.name", read_only=True)
     jenkins_sync_status_display = serializers.CharField(source="get_jenkins_sync_status_display", read_only=True)
+    gitlab_sync_status_display = serializers.CharField(source="get_gitlab_sync_status_display", read_only=True)
+    harbor_sync_status_display = serializers.CharField(source="get_harbor_sync_status_display", read_only=True)
 
     class Meta:
         model = Application
@@ -75,7 +77,9 @@ class ApplicationSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "creator", "modifier", "create_time", "update_time",
             "git_url", "gitlab_project_id", "jenkins_ci_job", "jenkins_cd_job", "harbor_project",
-            "jenkins_sync_status", "jenkins_sync_time", "jenkins_sync_message"
+            "jenkins_sync_status", "jenkins_sync_time", "jenkins_sync_message",
+            "gitlab_sync_status", "gitlab_sync_time", "gitlab_sync_message",
+            "harbor_sync_status", "harbor_sync_time", "harbor_sync_message"
         ]
 
 

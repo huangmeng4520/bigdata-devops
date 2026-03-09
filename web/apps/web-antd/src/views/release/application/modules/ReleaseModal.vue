@@ -18,9 +18,13 @@ import {
   triggerRelease,
 } from '#/api/release';
 
+import { useRouter } from 'vue-router';
+
 const emit = defineEmits<{
   success: [];
 }>();
+
+const router = useRouter();
 
 const [Modal, modalApi] = useVbenModal({
   onConfirm: handleConfirm,
@@ -182,7 +186,7 @@ async function handleConfirm() {
 
   submitting.value = true;
   try {
-    // 构建提交数据，清理空字符串
+    // 构建提交数据
     const submitData: any = {
       branch: formData.value.branch,
       environment: formData.value.environment,
@@ -190,27 +194,44 @@ async function handleConfirm() {
       approvers: formData.value.approvers,
       remark: formData.value.remark || '',
     };
-    // 只有有值时才添加可选字段
-    if (formData.value.version) {
+    // 版本号：始终传递，即使为空
+    if (formData.value.version !== undefined && formData.value.version !== null) {
       submitData.version = formData.value.version;
     }
+    // 审批类型
     if (formData.value.approval_type) {
       submitData.approval_type = formData.value.approval_type;
     }
 
-    const res = await triggerRelease(application.value.id, submitData);
-    message.success(res.message);
+    console.log('提交发布数据:', submitData);
+    const res: any = await triggerRelease(application.value.id, submitData);
 
-    // 重置表单
-    resetForm();
+    // 根据返回状态判断是否关闭对话框并跳转
+    const successStatuses = ['building', 'pending', 'approval_pending'];
+    if (successStatuses.includes(res.status)) {
+      message.success(res.message);
 
-    // 关闭弹窗并触发成功事件
-    modalApi.close();
-    emit('success');
+      // 重置表单
+      resetForm();
+
+      // 关闭弹窗
+      modalApi.close();
+      emit('success');
+
+      // 跳转到发布记录页面
+      router.push('/release/record');
+    } else if (res.status === 'build_failed') {
+      // 构建触发失败，不关闭弹窗，显示错误
+      message.error(res.message || '触发构建失败');
+    } else {
+      // 其他情况
+      message.warning(res.message || '发布已创建');
+    }
 
     return true;
   } catch (error: any) {
-    message.error(error?.response?.data?.error || '发布失败');
+    console.error('发布失败:', error);
+    message.error(error?.message || error?.response?.data?.error || '发布失败');
     return false;
   } finally {
     submitting.value = false;
