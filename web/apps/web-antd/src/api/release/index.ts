@@ -4,6 +4,7 @@ export * from './application';
 export * from './pipelineTemplate';
 export * from './environmentStrategy';
 export * from './cdConfigExport';
+export * from './deployment';
 
 // applicationPipeline 和 application 都有 syncToJenkins，显式导出避免冲突
 export {

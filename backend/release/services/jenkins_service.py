@@ -570,17 +570,195 @@ class JenkinsService(BaseService):
         folder_path = self._build_job_path(folder) if folder else ""
         path = f"{folder_path}/job/{name}" if folder else f"/job/{name}"
 
-        if parameters:
+        # 检查 Job 是否是参数化构建
+        is_parametrized = self._check_job_has_parameters(path)
+
+        if is_parametrized and parameters:
             # 参数化构建
             param_str = "&".join([f"{k}={v}" for k, v in parameters.items()])
             endpoint = f"{path}/buildWithParameters?{param_str}"
         else:
+            # 无参数构建
             endpoint = f"{path}/build"
 
-        self._log_info(f"触发 Jenkins 构建: {name}", {"folder": folder, "parameters": parameters})
+        self._log_info(f"触发 Jenkins 构建: {name}", {"folder": folder, "path": path, "endpoint": endpoint, "is_parametrized": is_parametrized, "parameters": parameters})
         response = self._request("POST", endpoint)
+
+        self._log_info(f"Jenkins 响应: status_code={response.status_code}")
 
         if response.status_code in [200, 201, 302]:
             self._log_info(f"Jenkins 构建触发成功: {name}")
             return True
+
+        self._log_error(f"Jenkins 构建触发失败: {name}", {
+            "status_code": response.status_code,
+            "response": response.text[:500] if response.text else "empty"
+        })
         return False
+
+    def _check_job_has_parameters(self, job_path: str) -> bool:
+        """
+        检查 Job 是否定义了参数
+
+        Args:
+            job_path: Job 的 API 路径
+
+        Returns:
+            是否是参数化构建
+        """
+        try:
+            endpoint = f"{job_path}/api/json?tree=property[parameterDefinitions[name]]"
+            response = self._request("GET", endpoint)
+
+            if response.status_code == 200:
+                data = response.json()
+                properties = data.get("property", [])
+                for prop in properties:
+                    if prop.get("parameterDefinitions"):
+                        return True
+        except Exception as e:
+            self._log_error("检查 Job 参数失败", {"error": str(e)})
+
+        return False
+
+    def get_job_info(self, name: str, folder: str = None) -> Optional[Dict[str, Any]]:
+        """
+        获取 Job 信息
+
+        Args:
+            name: Job 名称
+            folder: Folder 路径
+
+        Returns:
+            Job 信息字典
+        """
+        folder_path = self._build_job_path(folder) if folder else ""
+        path = f"{folder_path}/job/{name}" if folder else f"/job/{name}"
+
+        try:
+            response = self._request("GET", f"{path}/api/json")
+            if response.status_code == 200:
+                return response.json()
+        except Exception as e:
+            self._log_error(f"获取 Job 信息失败: {name}", {"error": str(e)})
+        return None
+
+    def get_build_info(self, name: str, build_number: int, folder: str = None) -> Optional[Dict[str, Any]]:
+        """
+        获取构建信息
+
+        Args:
+            name: Job 名称
+            build_number: 构建号
+            folder: Folder 路径
+
+        Returns:
+            构建信息字典
+        """
+        folder_path = self._build_job_path(folder) if folder else ""
+        path = f"{folder_path}/job/{name}" if folder else f"/job/{name}"
+
+        try:
+            response = self._request("GET", f"{path}/{build_number}/api/json")
+            if response.status_code == 200:
+                return response.json()
+        except Exception as e:
+            self._log_error(f"获取构建信息失败: {name}#{build_number}", {"error": str(e)})
+        return None
+
+    def get_build_console_output(self, name: str, build_number: int, folder: str = None) -> Optional[str]:
+        """
+        获取构建控制台输出
+
+        Args:
+            name: Job 名称
+            build_number: 构建号
+            folder: Folder 路径
+
+        Returns:
+            控制台输出文本
+        """
+        folder_path = self._build_job_path(folder) if folder else ""
+        path = f"{folder_path}/job/{name}" if folder else f"/job/{name}"
+
+        try:
+            response = self._request(
+                "GET",
+                f"{path}/{build_number}/consoleText",
+                headers={"Accept": "text/plain"}
+            )
+            if response.status_code == 200:
+                return response.text
+        except Exception as e:
+            self._log_error(f"获取构建日志失败: {name}#{build_number}", {"error": str(e)})
+        return None
+
+    def stop_build(self, name: str, build_number: int, folder: str = None) -> bool:
+        """
+        停止构建
+
+        Args:
+            name: Job 名称
+            build_number: 构建号
+            folder: Folder 路径
+
+        Returns:
+            是否停止成功
+        """
+        folder_path = self._build_job_path(folder) if folder else ""
+        path = f"{folder_path}/job/{name}" if folder else f"/job/{name}"
+
+        try:
+            response = self._request("POST", f"{path}/{build_number}/stop")
+            if response.status_code in [200, 302]:
+                self._log_info(f"停止构建成功: {name}#{build_number}")
+                return True
+        except Exception as e:
+            self._log_error(f"停止构建失败: {name}#{build_number}", {"error": str(e)})
+        return False
+
+    def get_last_build_number(self, name: str, folder: str = None) -> Optional[int]:
+        """
+        获取最后一次构建号
+
+        Args:
+            name: Job 名称
+            folder: Folder 路径
+
+        Returns:
+            最后构建号，如果没有构建则返回 None
+        """
+        job_info = self.get_job_info(name, folder)
+        if job_info and job_info.get('lastBuild'):
+            return job_info['lastBuild'].get('number')
+        return None
+
+    def build_job(self, name: str, folder: str = None, parameters: Dict = None) -> Optional[Dict[str, Any]]:
+        """
+        触发构建并返回构建信息
+
+        Args:
+            name: Job 名称
+            folder: Folder 路径
+            parameters: 构建参数
+
+        Returns:
+            包含构建号和 URL 的字典
+        """
+        # 获取当前最后构建号
+        last_build = self.get_last_build_number(name, folder)
+
+        # 触发构建
+        if self.trigger_build(name, folder, parameters):
+            import time
+            # 等待新构建开始
+            for _ in range(10):
+                time.sleep(1)
+                new_build = self.get_last_build_number(name, folder)
+                if new_build and new_build != last_build:
+                    job_info = self.get_job_info(name, folder)
+                    return {
+                        'number': new_build,
+                        'url': job_info['lastBuild']['url'] if job_info else None
+                    }
+        return None

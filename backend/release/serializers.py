@@ -7,7 +7,8 @@ from .models import (
     Project, Module, Application, ConfigPackage, SyncLog, Template,
     PipelineTemplate, PipelineTemplateVersion,
     ApplicationPipelineConfig, ApplicationPipelineVersion,
-    EnvironmentStrategy, CDConfigExport
+    EnvironmentStrategy, CDConfigExport,
+    ReleaseRecord, ReleaseBuildLog, ApprovalRule
 )
 
 
@@ -170,12 +171,16 @@ class PipelineTemplateVersionCreateSerializer(serializers.ModelSerializer):
     """模板版本创建序列化器"""
     template = serializers.PrimaryKeyRelatedField(
         queryset=PipelineTemplate.objects.all(),
-        required=False
+        required=False,
+        allow_null=True
     )
 
     class Meta:
         model = PipelineTemplateVersion
         fields = ["template", "version", "content", "variables", "stages", "stages_content", "change_log", "is_latest", "status"]
+        extra_kwargs = {
+            'template': {'required': False, 'allow_null': True},
+        }
 
 
 class PipelineTemplateSerializer(serializers.ModelSerializer):
@@ -350,3 +355,82 @@ class GenerateNamesSerializer(serializers.Serializer):
     app = serializers.CharField(max_length=64, help_text="应用编码")
     version = serializers.CharField(max_length=32, required=False, default="latest", help_text="版本号")
     environment = serializers.CharField(max_length=32, required=False, default="dev", help_text="环境")
+
+
+# ============================================================
+# 发布管理相关序列化器
+# ============================================================
+
+class ReleaseRecordSerializer(serializers.ModelSerializer):
+    """发布记录序列化器"""
+    application_name = serializers.CharField(source="application.name", read_only=True)
+    application_code = serializers.CharField(source="application.code", read_only=True)
+    project_name = serializers.CharField(source="application.project.name", read_only=True)
+    module_name = serializers.CharField(source="application.module.name", read_only=True)
+    environment_display = serializers.CharField(source='get_environment_display', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+
+    class Meta:
+        model = ReleaseRecord
+        fields = "__all__"
+        read_only_fields = [
+            "creator", "modifier", "create_time", "update_time",
+            "jenkins_build_number", "jenkins_build_url", "jenkins_build_status",
+            "jenkins_build_duration", "docker_image", "artifact_url"
+        ]
+
+
+class ReleaseCreateSerializer(serializers.Serializer):
+    """发布创建序列化器"""
+    branch = serializers.CharField(max_length=128, help_text="代码分支")
+    environment = serializers.CharField(max_length=32, help_text="目标环境")
+    version = serializers.CharField(max_length=64, required=False, allow_null=True, default=None, help_text="发布版本")
+    require_approval = serializers.BooleanField(default=False, help_text="需要审批")
+    approval_type = serializers.CharField(max_length=32, required=False, allow_null=True, default=None, help_text="审批类型")
+    approvers = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        default=list,
+        help_text="审批人列表"
+    )
+    remark = serializers.CharField(required=False, allow_blank=True, default='', help_text="发布说明")
+
+
+class ReleaseBuildLogSerializer(serializers.ModelSerializer):
+    """构建日志序列化器"""
+    release_info = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ReleaseBuildLog
+        fields = "__all__"
+        read_only_fields = ["create_time"]
+
+    def get_release_info(self, obj):
+        return {
+            "application": obj.release.application.name,
+            "build_number": obj.release.jenkins_build_number,
+        }
+
+
+class ApprovalRuleSerializer(serializers.ModelSerializer):
+    """审批规则序列化器"""
+    rule_type_display = serializers.CharField(source='get_rule_type_display', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+
+    class Meta:
+        model = ApprovalRule
+        fields = "__all__"
+        read_only_fields = ["creator", "modifier", "create_time", "update_time"]
+
+
+class ApprovalRuleCreateSerializer(serializers.ModelSerializer):
+    """审批规则创建序列化器"""
+    class Meta:
+        model = ApprovalRule
+        fields = ["name", "code", "environment", "rule_type", "approvers", "min_approvers", "status"]
+
+
+class ApprovalActionSerializer(serializers.Serializer):
+    """审批操作序列化器"""
+    approved = serializers.BooleanField(help_text="是否批准")
+    comment = serializers.CharField(max_length=512, required=False, allow_blank=True, default='', help_text="审批意见")

@@ -24,7 +24,20 @@ router.register(r'application-pipeline-versions', views.ApplicationPipelineVersi
 router.register(r'environment-strategies', views.EnvironmentStrategyViewSet, basename='release-environment-strategy')
 router.register(r'cd-exports', views.CDConfigExportViewSet, basename='release-cd-export')
 
+# 发布管理路由
+router.register(r'release-records', views.ReleaseRecordViewSet, basename='release-record')
+router.register(r'approval-rules', views.ApprovalRuleViewSet, basename='approval-rule')
+
 
 urlpatterns = [
     path('', include(router.urls)),
+    # 应用发布相关 API
+    path('application/<int:app_id>/release/', views.trigger_release, name='trigger-release'),
+    path('application/<int:app_id>/branches/', views.get_app_branches, name='app-branches'),
+    path('application/<int:app_id>/environments/', views.get_app_environments, name='app-environments'),
+    path('approval-rules/list/', views.get_approval_rules, name='approval-rules-list'),
+    # 发布统计 API
+    path('statistics/', views.get_statistics, name='release-statistics'),
+    path('statistics/trend/', views.get_trend, name='release-trend'),
+    path('statistics/app-rank/', views.get_app_rank, name='release-app-rank'),
 ]

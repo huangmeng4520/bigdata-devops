@@ -374,6 +374,7 @@ export function useColumns(
         },
         name: 'CellOperation',
         options: [
+          op('release:application:release', { code: 'release', text: '发布', type: 'primary' }),
           op('release:application:edit', 'edit'),
           op('release:application:sync-jenkins', { code: 'sync-jenkins', text: '同步 Jenkins' }),
           op('release:application:sync-resources', { code: 'sync-resources', text: '同步资源' }),
@@ -385,7 +386,7 @@ export function useColumns(
       headerAlign: 'center',
       showOverflow: false,
       title: '操作',
-      width: 280,
+      width: 320,
     },
   ];
 }

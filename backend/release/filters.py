@@ -7,7 +7,8 @@ from .models import (
     Project, Module, Application, ConfigPackage, SyncLog, Template,
     PipelineTemplate, PipelineTemplateVersion,
     ApplicationPipelineConfig, ApplicationPipelineVersion,
-    EnvironmentStrategy, CDConfigExport
+    EnvironmentStrategy, CDConfigExport,
+    ReleaseRecord, ReleaseBuildLog, ApprovalRule
 )
 
 
@@ -165,3 +166,51 @@ class CDConfigExportFilter(django_filters.FilterSet):
     class Meta:
         model = CDConfigExport
         fields = ['application', 'environment', 'config_version', 'export_format', 'exported_by']
+
+
+# ============================================================
+# 发布管理相关过滤器
+# ============================================================
+
+class ReleaseRecordFilter(django_filters.FilterSet):
+    """发布记录过滤器"""
+    application = django_filters.NumberFilter(field_name='application_id')
+    application_name = django_filters.CharFilter(field_name='application__name', lookup_expr='icontains')
+    project = django_filters.NumberFilter(field_name='application__project_id')
+    module = django_filters.NumberFilter(field_name='application__module_id')
+    environment = django_filters.CharFilter()
+    status = django_filters.CharFilter()
+    branch = django_filters.CharFilter(lookup_expr='icontains')
+    version = django_filters.CharFilter(lookup_expr='icontains')
+    released_by = django_filters.CharFilter(lookup_expr='icontains')
+    start_date = django_filters.DateFilter(field_name='create_time__date', lookup_expr='gte')
+    end_date = django_filters.DateFilter(field_name='create_time__date', lookup_expr='lte')
+
+    class Meta:
+        model = ReleaseRecord
+        fields = ['application', 'application_name', 'project', 'module', 'environment', 'status', 'branch', 'version', 'released_by', 'start_date', 'end_date']
+
+
+class ReleaseBuildLogFilter(django_filters.FilterSet):
+    """构建日志过滤器"""
+    release = django_filters.NumberFilter(field_name='release_id')
+    log_type = django_filters.CharFilter()
+    stage_name = django_filters.CharFilter(lookup_expr='icontains')
+    stage_status = django_filters.CharFilter()
+
+    class Meta:
+        model = ReleaseBuildLog
+        fields = ['release', 'log_type', 'stage_name', 'stage_status']
+
+
+class ApprovalRuleFilter(django_filters.FilterSet):
+    """审批规则过滤器"""
+    name = django_filters.CharFilter(lookup_expr='icontains')
+    code = django_filters.CharFilter(lookup_expr='icontains')
+    environment = django_filters.CharFilter()
+    rule_type = django_filters.CharFilter()
+    status = django_filters.NumberFilter()
+
+    class Meta:
+        model = ApprovalRule
+        fields = ['name', 'code', 'environment', 'rule_type', 'status']

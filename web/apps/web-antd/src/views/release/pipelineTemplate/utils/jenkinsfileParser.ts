@@ -1,6 +1,6 @@
 /**
  * Jenkinsfile 解析工具
- * 用于解析和更新 Jenkinsfile 中的 stage 内容
+ * 使用 Pipeline 语法分析，支持各种复杂格式
  */
 
 export interface Stage {
@@ -11,66 +11,267 @@ export interface Stage {
 }
 
 /**
+ * Token 类型
+ */
+enum TokenType {
+  WORD,        // 标识符、关键字
+  STRING,      // 字符串 'xxx' 或 "xxx"
+  LBRACE,      // {
+  RBRACE,      // }
+  LPAREN,      // (
+  RPAREN,      // )
+  NEWLINE,     // 换行
+  WHITESPACE,  // 空白
+  COMMENT,     // 注释
+  OTHER,       // 其他
+}
+
+interface Token {
+  type: TokenType;
+  value: string;
+  line: number;
+  col: number;
+}
+
+/**
+ * 词法分析器 - 将源代码转换为 token 流
+ */
+function tokenize(content: string): Token[] {
+  const tokens: Token[] = [];
+  let line = 0;
+  let col = 0;
+  let i = 0;
+
+  while (i < content.length) {
+    const char = content[i];
+
+    if (char === '\n') {
+      tokens.push({ type: TokenType.NEWLINE, value: char, line, col });
+      line++;
+      col = 0;
+      i++;
+    } else if (char === '{') {
+      tokens.push({ type: TokenType.LBRACE, value: char, line, col });
+      col++;
+      i++;
+    } else if (char === '}') {
+      tokens.push({ type: TokenType.RBRACE, value: char, line, col });
+      col++;
+      i++;
+    } else if (char === '(') {
+      tokens.push({ type: TokenType.LPAREN, value: char, line, col });
+      col++;
+      i++;
+    } else if (char === ')') {
+      tokens.push({ type: TokenType.RPAREN, value: char, line, col });
+      col++;
+      i++;
+    } else if (char === "'" || char === '"') {
+      // 字符串
+      const startChar = char;
+      let value = char;
+      i++;
+      col++;
+      while (i < content.length) {
+        const c = content[i];
+        value += c;
+        if (c === startChar && content[i - 1] !== '\\') {
+          i++;
+          col++;
+          break;
+        }
+        if (c === '\n') {
+          line++;
+          col = 0;
+        } else {
+          col++;
+        }
+        i++;
+      }
+      tokens.push({ type: TokenType.STRING, value, line: tokens[tokens.length - 1]?.line || 0, col });
+    } else if (char === '/' && content[i + 1] === '/') {
+      // 单行注释
+      let value = '';
+      while (i < content.length && content[i] !== '\n') {
+        value += content[i];
+        i++;
+        col++;
+      }
+      tokens.push({ type: TokenType.COMMENT, value, line, col });
+    } else if (/\s/.test(char)) {
+      // 空白字符
+      let value = '';
+      while (i < content.length && /\s/.test(content[i]) && content[i] !== '\n') {
+        value += content[i];
+        i++;
+        col++;
+      }
+      tokens.push({ type: TokenType.WHITESPACE, value, line, col });
+    } else if (/[a-zA-Z_]/.test(char)) {
+      // 标识符
+      let value = '';
+      while (i < content.length && /[a-zA-Z0-9_]/.test(content[i])) {
+        value += content[i];
+        i++;
+        col++;
+      }
+      tokens.push({ type: TokenType.WORD, value, line, col });
+    } else {
+      tokens.push({ type: TokenType.OTHER, value: char, line, col });
+      i++;
+      col++;
+    }
+  }
+
+  return tokens;
+}
+
+/**
+ * 获取 token 对应的行号（从原始内容计算）
+ */
+function getTokenLine(content: string, targetLine: number): number {
+  const lines = content.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    if (i === targetLine) return i;
+  }
+  return 0;
+}
+
+/**
  * 从 Jenkinsfile 内容中解析 stages
  */
 export function parseStages(jenkinsfileContent: string): Stage[] {
   if (!jenkinsfileContent) return [];
 
-  const stages: Stage[] = [];
+  const tokens = tokenize(jenkinsfileContent);
   const lines = jenkinsfileContent.split('\n');
+  const stages: Stage[] = [];
 
   let inStages = false;
-  let braceCount = 0;
-  let currentStage: { name: string; startLine: number; contentLines: string[] } | null = null;
+  let braceDepth = 0;
+  let stagesStartBraceDepth = 0;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmedLine = line.trim();
+  // 用于追踪当前位置
+  let currentStage: { name: string; startTokenIndex: number; startLine: number } | null = null;
+  let tokenLineMap = new Map<number, number>();
+  let lineCounter = 0;
+  let charCounter = 0;
 
-    // 检测进入 stages 区域
-    if (trimmedLine === 'stages {' || trimmedLine.startsWith('stages {')) {
-      inStages = true;
-      braceCount = 1;
-      continue;
+  // 建立 token 到行号的映射
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    // 计算这个 token 对应的行号
+    while (charCounter < jenkinsfileContent.length) {
+      if (jenkinsfileContent.substring(charCounter, charCounter + token.value.length) === token.value) {
+        tokenLineMap.set(i, lineCounter);
+        // 更新行计数器
+        for (const c of token.value) {
+          if (c === '\n') {
+            lineCounter++;
+          }
+        }
+        charCounter += token.value.length;
+        break;
+      }
+      if (jenkinsfileContent[charCounter] === '\n') {
+        lineCounter++;
+      }
+      charCounter++;
     }
+  }
 
-    if (!inStages) continue;
+  // 解析 token 流
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
 
-    // 计算大括号
-    const openBraces = (line.match(/{/g) || []).length;
-    const closeBraces = (line.match(/}/g) || []).length;
-
-    // 检测 stage 开始
-    const stageMatch = trimmedLine.match(/^stage\(['"](.+?)['"]\)\s*{/);
-    if (stageMatch && braceCount === 1) {
-      currentStage = {
-        name: stageMatch[1],
-        startLine: i,
-        contentLines: [line],
-      };
-      braceCount += openBraces - closeBraces;
-      continue;
-    }
-
-    // 收集 stage 内容
-    if (currentStage) {
-      currentStage.contentLines.push(line);
-      braceCount += openBraces - closeBraces;
-
-      // stage 结束（braceCount 回到 1 表示 stages 层级）
-      if (braceCount === 1) {
-        stages.push({
-          name: currentStage.name,
-          startIndex: currentStage.startLine,
-          endIndex: i,
-          content: currentStage.contentLines.join('\n'),
-        });
-        currentStage = null;
+    if (token.type === TokenType.WORD && token.value === 'stages') {
+      // 查找下一个 {
+      for (let j = i + 1; j < tokens.length; j++) {
+        if (tokens[j].type === TokenType.LBRACE) {
+          inStages = true;
+          stagesStartBraceDepth = braceDepth;
+          braceDepth++;
+          i = j; // 跳过已处理的 token
+          break;
+        }
+        if (tokens[j].type === TokenType.NEWLINE) continue;
+        if (tokens[j].type === TokenType.WHITESPACE) continue;
+        if (tokens[j].type === TokenType.COMMENT) continue;
+        break;
       }
       continue;
     }
 
-    braceCount += openBraces - closeBraces;
+    if (token.type === TokenType.LBRACE) {
+      braceDepth++;
+    }
+
+    if (token.type === TokenType.RBRACE) {
+      braceDepth--;
+
+      // 检查是否 stage 结束
+      if (currentStage && braceDepth === stagesStartBraceDepth + 1) {
+        const endLine = tokenLineMap.get(i) || 0;
+        const startLine = currentStage.startLine;
+        const content = lines.slice(startLine, endLine + 1).join('\n');
+
+        stages.push({
+          name: currentStage.name,
+          startIndex: startLine,
+          endIndex: endLine,
+          content,
+        });
+
+        currentStage = null;
+      }
+
+      // 检查是否 stages 块结束
+      if (inStages && braceDepth === stagesStartBraceDepth) {
+        inStages = false;
+      }
+    }
+
+    // 检测 stage 开始
+    if (inStages && token.type === TokenType.WORD && token.value === 'stage' && !currentStage) {
+      // 查找 stage('xxx')
+      let stageName = '';
+      let foundLParen = false;
+      let foundString = false;
+
+      for (let j = i + 1; j < tokens.length; j++) {
+        const t = tokens[j];
+        if (t.type === TokenType.WHITESPACE || t.type === TokenType.NEWLINE || t.type === TokenType.COMMENT) continue;
+        if (t.type === TokenType.LPAREN) {
+          foundLParen = true;
+          continue;
+        }
+        if (foundLParen && t.type === TokenType.STRING) {
+          stageName = t.value.slice(1, -1); // 去掉引号
+          foundString = true;
+          continue;
+        }
+        if (foundString && t.type === TokenType.RPAREN) {
+          // 查找 {
+          for (let k = j + 1; k < tokens.length; k++) {
+            const tk = tokens[k];
+            if (tk.type === TokenType.WHITESPACE || tk.type === TokenType.NEWLINE || tk.type === TokenType.COMMENT) continue;
+            if (tk.type === TokenType.LBRACE) {
+              // 找到 stage 开始
+              currentStage = {
+                name: stageName,
+                startTokenIndex: i,
+                startLine: tokenLineMap.get(i) || 0,
+              };
+              i = k - 1; // 继续处理 { token
+              break;
+            }
+            break;
+          }
+          break;
+        }
+        break;
+      }
+    }
   }
 
   return stages;
@@ -80,41 +281,80 @@ export function parseStages(jenkinsfileContent: string): Stage[] {
  * 从 stage 内容中提取 steps 部分的脚本
  */
 export function extractStageScript(stageContent: string): string {
+  const tokens = tokenize(stageContent);
   const lines = stageContent.split('\n');
-  const scriptLines: string[] = [];
+
   let inSteps = false;
-  let braceCount = 0;
+  let stepsStartLine = 0;
+  let stepsEndLine = 0;
+  let braceDepth = 0;
+  let stepsBraceDepth = 0;
 
-  for (const line of lines) {
-    const trimmedLine = line.trim();
+  // 建立 token 到行号的映射
+  let lineCounter = 0;
+  let charCounter = 0;
+  const tokenLineMap = new Map<number, number>();
 
-    if (trimmedLine === 'steps {' || trimmedLine.startsWith('steps {')) {
-      inSteps = true;
-      braceCount = 1;
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    while (charCounter < stageContent.length) {
+      if (stageContent.substring(charCounter, charCounter + token.value.length) === token.value) {
+        tokenLineMap.set(i, lineCounter);
+        for (const c of token.value) {
+          if (c === '\n') lineCounter++;
+        }
+        charCounter += token.value.length;
+        break;
+      }
+      if (stageContent[charCounter] === '\n') lineCounter++;
+      charCounter++;
+    }
+  }
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+
+    if (!inSteps && token.type === TokenType.WORD && token.value === 'steps') {
+      // 查找 {
+      for (let j = i + 1; j < tokens.length; j++) {
+        const t = tokens[j];
+        if (t.type === TokenType.WHITESPACE || t.type === TokenType.NEWLINE || t.type === TokenType.COMMENT) continue;
+        if (t.type === TokenType.LBRACE) {
+          inSteps = true;
+          stepsBraceDepth = braceDepth;
+          braceDepth++;
+          stepsStartLine = tokenLineMap.get(j) || 0;
+          i = j;
+          break;
+        }
+        break;
+      }
       continue;
     }
 
-    if (!inSteps) continue;
-
-    const openBraces = (line.match(/{/g) || []).length;
-    const closeBraces = (line.match(/}/g) || []).length;
-
-    braceCount += openBraces - closeBraces;
-
-    if (braceCount === 0) {
-      break;
+    if (token.type === TokenType.LBRACE) {
+      braceDepth++;
     }
 
-    // 去掉前导空格（保留相对缩进）
-    scriptLines.push(line);
+    if (token.type === TokenType.RBRACE) {
+      braceDepth--;
+
+      if (inSteps && braceDepth === stepsBraceDepth) {
+        // steps 结束
+        stepsEndLine = tokenLineMap.get(i) || 0;
+        // 提取 steps 内容
+        const stepsContent = lines.slice(stepsStartLine + 1, stepsEndLine).join('\n');
+        return normalizeIndentation(stepsContent);
+      }
+    }
   }
 
-  // 统一去除前导空格
-  return normalizeIndentation(scriptLines.join('\n'));
+  return '';
 }
 
 /**
  * 更新 stage 中的 steps 内容
+ * 使用语法分析，精确定位和替换
  */
 export function updateStageSteps(
   jenkinsfileContent: string,
@@ -129,60 +369,142 @@ export function updateStageSteps(
   }
 
   const lines = jenkinsfileContent.split('\n');
-  const stageStartLine = targetStage.startIndex;
-  const stageEndLine = targetStage.endIndex;
+  const stageContent = targetStage.content;
+
+  console.log('[updateStageSteps] stage:', stageName, 'lines:', targetStage.startIndex, '-', targetStage.endIndex);
 
   // 在 stage 内容中找到 steps 区域
-  let stepsStartLine = -1;
-  let stepsEndLine = -1;
+  const tokens = tokenize(stageContent);
+  let stepsKeywordToken = -1;  // 'steps' 关键字的 token 索引
+  let stepsEndToken = -1;      // steps 块结束的 } token 索引
+  let braceDepth = 0;
+  let stepsStartBraceDepth = 0;  // steps { 之后的 braceDepth
   let inSteps = false;
-  let braceCount = 0;
+  let foundFirstBrace = false;  // 是否已经处理了 stage 的第一个 {
 
-  for (let i = stageStartLine; i <= stageEndLine; i++) {
-    const line = lines[i];
-    const trimmedLine = line.trim();
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
 
-    if (trimmedLine === 'steps {' || trimmedLine.startsWith('steps {')) {
-      stepsStartLine = i;
-      inSteps = true;
-      braceCount = 1;
+    // 跳过直到找到 stage 的第一个 {（stage 开括号）
+    if (!foundFirstBrace) {
+      if (token.type === TokenType.LBRACE) {
+        foundFirstBrace = true;
+        braceDepth = 1;  // stage { 已经让 depth = 1
+      }
       continue;
     }
 
-    if (inSteps) {
-      const openBraces = (line.match(/{/g) || []).length;
-      const closeBraces = (line.match(/}/g) || []).length;
-      braceCount += openBraces - closeBraces;
+    if (!inSteps && token.type === TokenType.WORD && token.value === 'steps') {
+      // 记录 steps 关键字位置
+      stepsKeywordToken = i;
+      
+      // 查找 steps 后面的 {
+      for (let j = i + 1; j < tokens.length; j++) {
+        const t = tokens[j];
+        if (t.type === TokenType.WHITESPACE || t.type === TokenType.NEWLINE || t.type === TokenType.COMMENT) continue;
+        if (t.type === TokenType.LBRACE) {
+          inSteps = true;
+          braceDepth++;  // steps { 让 depth +1
+          stepsStartBraceDepth = braceDepth;  // 记录 steps 开始时的 depth
+          i = j; // 继续处理 { token
+          break;
+        }
+        break;
+      }
+      continue;
+    }
 
-      if (braceCount === 0) {
-        stepsEndLine = i;
+    if (token.type === TokenType.LBRACE) {
+      braceDepth++;
+    }
+
+    if (token.type === TokenType.RBRACE) {
+      braceDepth--;
+      
+      if (inSteps && braceDepth === stepsStartBraceDepth - 1) {
+        // 找到 steps 块的结束 }
+        // 当遇到 steps 的 } 时，depth 会减到 stepsStartBraceDepth - 1
+        stepsEndToken = i;
         break;
       }
     }
   }
 
-  if (stepsStartLine === -1 || stepsEndLine === -1) {
+  if (stepsKeywordToken === -1 || stepsEndToken === -1) {
     throw new Error(`Steps section not found in stage "${stageName}"`);
   }
 
-  // 计算 steps 的缩进
-  const stepsLine = lines[stepsStartLine];
-  const stepsIndent = stepsLine.match(/^(\s*)/)?.[1] || '';
+  console.log('[updateStageSteps] stepsKeywordToken:', stepsKeywordToken, 'stepsEndToken:', stepsEndToken);
+  console.log('[updateStageSteps] stepsKeywordToken value:', tokens[stepsKeywordToken]?.value);
+  console.log('[updateStageSteps] stepsEndToken value:', tokens[stepsEndToken]?.value);
+
+  // 计算 stage 内容在原始 jenkinsfileContent 中的起始字符位置
+  let stageStartChar = 0;
+  for (let i = 0; i < targetStage.startIndex; i++) {
+    stageStartChar += lines[i].length + 1; // +1 for newline
+  }
+
+  console.log('[updateStageSteps] stageStartChar:', stageStartChar, 'stage start line:', targetStage.startIndex);
+
+  // 计算 steps 块在原始 jenkinsfileContent 中的字符位置
+  // stepsStartChar: 'steps' 关键字在原始内容中的起始位置
+  // stepsEndChar: steps 块结束 } 在原始内容中的结束位置
+  let stepsStartChar = stageStartChar;
+  let stepsEndChar = stageStartChar;
+
+  // 累积字符到 stepsKeywordToken（包含 steps 关键字本身的起始位置）
+  for (let i = 0; i < stepsKeywordToken; i++) {
+    stepsStartChar += tokens[i].value.length;
+  }
+
+  // 累积字符到 stepsEndToken（包含结束 } token 的结束位置）
+  for (let i = 0; i <= stepsEndToken; i++) {
+    stepsEndChar += tokens[i].value.length;
+  }
+
+  console.log('[updateStageSteps] stepsStartChar:', stepsStartChar);
+  console.log('[updateStageSteps] stepsEndChar:', stepsEndChar);
+  console.log('[updateStageSteps] content at stepsStartChar:', jenkinsfileContent.substring(stepsStartChar - 5, stepsStartChar + 20));
+  console.log('[updateStageSteps] content at stepsEndChar-5:', jenkinsfileContent.substring(stepsEndChar - 10, stepsEndChar + 10));
+
+  // 计算新的 steps 内容
+  const stageIndent = lines[targetStage.startIndex].match(/^(\s*)/)?.[1] || '';
+  const stepsIndent = stageIndent + '    ';
   const contentIndent = stepsIndent + '    ';
 
-  // 构建新的 steps 内容
   const formattedScript = newStepsScript
     .split('\n')
-    .map((line) => (line.trim() ? contentIndent + line : ''))
+    .map((line) => (line.trim() ? contentIndent + line.trim() : ''))
     .join('\n');
 
-  const newStepsContent = `${stepsIndent}steps {\n${formattedScript}\n${stepsIndent}}`;
+  const newStepsBlock = `${stepsIndent}steps {\n${formattedScript}\n${stepsIndent}}`;
 
-  // 替换原来的 steps 区域
-  const beforeSteps = lines.slice(0, stepsStartLine).join('\n');
-  const afterSteps = lines.slice(stepsEndLine + 1).join('\n');
+  // 构建新的 Jenkinsfile
+  // beforeSteps: 从开头到 steps 关键字之前
+  // afterSteps: 从 steps 结束 } 之后开始
+  const beforeSteps = jenkinsfileContent.substring(0, stepsStartChar);
+  const afterSteps = jenkinsfileContent.substring(stepsEndChar);
 
-  return beforeSteps + newStepsContent + afterSteps;
+  console.log('[updateStageSteps] beforeSteps length:', beforeSteps.length);
+  console.log('[updateStageSteps] afterSteps start:', JSON.stringify(afterSteps.substring(0, 50)));
+
+  // afterSteps 应该包含 stage 的闭合括号
+  // 格式通常是: "\n    }" 或 "        }\n..."
+  // 如果 afterSteps 以空白开头然后是 }，说明包含 stage 的闭括号
+  const afterStepsTrimmed = afterSteps.trimStart();
+  console.log('[updateStageSteps] afterStepsTrimmed start:', JSON.stringify(afterStepsTrimmed.substring(0, 20)));
+
+  if (afterStepsTrimmed.startsWith('}')) {
+    // afterSteps 包含 stage 的闭括号，直接拼接
+    const newContent = beforeSteps + newStepsBlock + afterSteps;
+    console.log('[updateStageSteps] newContent length:', newContent.length);
+    return newContent;
+  } else {
+    // afterSteps 不包含 stage 的闭括号，需要添加
+    const newContent = beforeSteps + newStepsBlock + '\n' + stageIndent + '}' + afterSteps;
+    console.log('[updateStageSteps] newContent length:', newContent.length);
+    return newContent;
+  }
 }
 
 /**
@@ -212,7 +534,8 @@ function normalizeIndentation(content: string): string {
   // 去除最小缩进
   return lines
     .map((line) => (line.trim() ? line.substring(minIndent) : line))
-    .join('\n');
+    .join('\n')
+    .trim();
 }
 
 /**
@@ -223,26 +546,34 @@ export function validateJenkinsfile(content: string): { valid: boolean; error?: 
     return { valid: false, error: 'Jenkinsfile 内容不能为空' };
   }
 
-  if (!content.includes('pipeline {')) {
+  // 使用词法分析验证括号匹配
+  const tokens = tokenize(content);
+  let braceCount = 0;
+  let hasPipeline = false;
+  let hasStages = false;
+
+  for (const token of tokens) {
+    if (token.type === TokenType.LBRACE) braceCount++;
+    if (token.type === TokenType.RBRACE) {
+      braceCount--;
+      if (braceCount < 0) {
+        return { valid: false, error: '大括号不匹配：多余的 }' };
+      }
+    }
+    if (token.type === TokenType.WORD && token.value === 'pipeline') hasPipeline = true;
+    if (token.type === TokenType.WORD && token.value === 'stages') hasStages = true;
+  }
+
+  if (!hasPipeline) {
     return { valid: false, error: '无效的 Jenkinsfile 格式：缺少 pipeline 定义' };
   }
 
-  if (!content.includes('stages {')) {
+  if (!hasStages) {
     return { valid: false, error: '无效的 Jenkinsfile 格式：缺少 stages 定义' };
   }
 
-  // 检查大括号匹配
-  let braceCount = 0;
-  for (const char of content) {
-    if (char === '{') braceCount++;
-    if (char === '}') braceCount--;
-    if (braceCount < 0) {
-      return { valid: false, error: '大括号不匹配' };
-    }
-  }
-
   if (braceCount !== 0) {
-    return { valid: false, error: '大括号不匹配' };
+    return { valid: false, error: `大括号不匹配：缺少 ${braceCount} 个 }` };
   }
 
   return { valid: true };

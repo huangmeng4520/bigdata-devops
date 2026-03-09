@@ -541,3 +541,269 @@ def _sync_single_job(jenkins, app, template, variables, job_type, folder):
         return {"success": True, "job_name": f"{folder}/{job_name}"}
     else:
         return {"success": False, "error": "更新 Jenkins Job 失败"}
+
+
+# ============================================================
+# 发布构建任务
+# ============================================================
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def trigger_jenkins_build(self, release_id: int):
+    """
+    触发 Jenkins 构建
+
+    Args:
+        release_id: 发布记录 ID
+    """
+    from django.utils import timezone
+    from .models import ReleaseRecord, SyncLog
+    from .services import JenkinsService
+
+    logger.info(f"[Celery] 开始触发 Jenkins 构建: release_id={release_id}")
+
+    try:
+        release = ReleaseRecord.objects.select_related(
+            'application', 'application__project', 'application__module',
+            'application__ci_template'
+        ).get(pk=release_id)
+    except ReleaseRecord.DoesNotExist:
+        logger.error(f"[Celery] 发布记录不存在: release_id={release_id}")
+        return {"success": False, "error": "发布记录不存在"}
+
+    application = release.application
+
+    try:
+        # 优先查找环境的 CI 配置
+        from .models import ApplicationPipelineConfig
+        pipeline_config = ApplicationPipelineConfig.objects.filter(
+            application=application,
+            config_type='ci',
+            environment=release.environment,
+            is_active=True
+        ).first()
+
+        # 确定使用的 Jenkins Job
+        jenkins_job_name = None
+        if pipeline_config and pipeline_config.jenkins_job_name:
+            # 使用环境特定的 Job
+            jenkins_job_name = pipeline_config.jenkins_job_name
+        elif application.ci_template and application.jenkins_ci_job:
+            # 使用应用关联的全局 CI Job
+            jenkins_job_name = application.jenkins_ci_job
+            logger.info(f"[Celery] 使用应用全局 CI Job: {jenkins_job_name}")
+
+        if not jenkins_job_name:
+            release.status = 'build_failed'
+            release.status_message = f"未找到 {release.environment} 环境的 CI 配置，请先同步 Jenkins 配置"
+            release.save(update_fields=['status', 'status_message'])
+            return {"success": False, "error": "未找到 CI 配置"}
+
+        jenkins = JenkinsService()
+
+        # 构建参数 - 完整的 Jenkins Job 参数
+        parameters = {
+            'PROJECT': application.project.code if application.project else '',
+            'MODULE': application.module.code if application.module else '',
+            'APP': application.code,
+            'BRANCH': release.branch,
+            'ENVIRONMENT': release.environment or '',
+        }
+        if release.version:
+            parameters['VERSION'] = release.version
+
+        logger.info(f"[Celery] 构建参数: {parameters}")
+
+        # 解析 Job 名称和 Folder
+        parts = jenkins_job_name.split('/')
+        job_name = parts[-1]
+        folder = '/'.join(parts[:-1]) if len(parts) > 1 else None
+
+        logger.info(f"[Celery] 解析 Jenkins Job: jenkins_job_name={jenkins_job_name}, job_name={job_name}, folder={folder}")
+
+        # 检查 Job 是否存在
+        if not jenkins.job_exists(job_name, folder):
+            logger.error(f"[Celery] Jenkins Job 不存在: {job_name}, folder={folder}")
+            release.status = 'build_failed'
+            release.status_message = f"Jenkins Job 不存在: {jenkins_job_name}"
+            release.save(update_fields=['status', 'status_message'])
+            return {"success": False, "error": "Jenkins Job 不存在"}
+
+        # 触发构建
+        build_info = jenkins.build_job(
+            name=job_name,
+            folder=folder,
+            parameters=parameters
+        )
+
+        logger.info(f"[Celery] build_job 返回: {build_info}")
+
+        if build_info:
+            # 更新发布记录
+            release.jenkins_job_name = jenkins_job_name
+            release.jenkins_build_number = build_info['number']
+            release.jenkins_build_url = build_info['url']
+            release.status = 'building'
+            release.save(update_fields=[
+                'jenkins_job_name', 'jenkins_build_number',
+                'jenkins_build_url', 'status'
+            ])
+
+            # 记录日志
+            SyncLog.objects.create(
+                app=application,
+                project=application.project,
+                module=application.module,
+                sync_type="jenkins",
+                resource_name=f"{jenkins_job_name}#{build_info['number']}",
+                action="update",
+                status=1,
+                message=f"触发构建成功: {release.branch} -> {release.environment}"
+            )
+
+            # 异步轮询构建状态
+            poll_build_status.delay(release_id)
+
+            logger.info(f"[Celery] 构建触发成功: {jenkins_job_name}#{build_info['number']}")
+            return {"success": True, "build_number": build_info['number']}
+
+        else:
+            release.status = 'build_failed'
+            release.status_message = "触发 Jenkins 构建失败"
+            release.save(update_fields=['status', 'status_message'])
+            return {"success": False, "error": "触发构建失败"}
+
+    except Exception as e:
+        logger.exception(f"[Celery] 触发构建异常: {e}")
+        release.status = 'build_failed'
+        release.status_message = str(e)[:512]
+        release.save(update_fields=['status', 'status_message'])
+        return {"success": False, "error": str(e)}
+
+
+@shared_task(bind=True)
+def poll_build_status(self, release_id: int):
+    """
+    轮询构建状态
+
+    Args:
+        release_id: 发布记录 ID
+    """
+    from django.utils import timezone
+    from .models import ReleaseRecord
+    from .services import JenkinsService
+
+    try:
+        release = ReleaseRecord.objects.get(pk=release_id)
+    except ReleaseRecord.DoesNotExist:
+        return {"success": False, "error": "发布记录不存在"}
+
+    if release.status != 'building':
+        logger.info(f"[Celery] 发布状态非 building，跳过轮询: {release.status}")
+        return {"success": True, "status": release.status}
+
+    try:
+        jenkins = JenkinsService()
+
+        # 解析 Job 名称和 Folder
+        job_full_name = release.jenkins_job_name
+        parts = job_full_name.split('/')
+        job_name = parts[-1]
+        folder = '/'.join(parts[:-1]) if len(parts) > 1 else None
+
+        # 获取构建信息
+        build_info = jenkins.get_build_info(
+            name=job_name,
+            build_number=release.jenkins_build_number,
+            folder=folder
+        )
+
+        if not build_info:
+            # 继续轮询
+            poll_build_status.apply_async(args=[release_id], countdown=10)
+            return {"success": True, "status": "polling"}
+
+        if build_info.get('building'):
+            # 构建中，拉取日志并继续轮询
+            fetch_build_log.delay(release_id)
+            poll_build_status.apply_async(args=[release_id], countdown=10)
+            return {"success": True, "status": "building"}
+
+        # 构建完成
+        result = build_info.get('result', 'UNKNOWN')
+        release.jenkins_build_status = result
+        release.jenkins_build_duration = build_info.get('duration', 0)
+
+        if result == 'SUCCESS':
+            release.status = 'build_success'
+            release.status_message = "构建成功"
+        else:
+            release.status = 'build_failed'
+            release.status_message = f"构建失败: {result}"
+
+        release.save(update_fields=[
+            'jenkins_build_status', 'jenkins_build_duration',
+            'status', 'status_message'
+        ])
+
+        # 拉取最终日志
+        fetch_build_log.delay(release_id)
+
+        logger.info(f"[Celery] 构建完成: {job_full_name}#{release.jenkins_build_number} - {result}")
+        return {"success": True, "status": release.status, "result": result}
+
+    except Exception as e:
+        logger.exception(f"[Celery] 轮询构建状态异常: {e}")
+        # 继续轮询
+        poll_build_status.apply_async(args=[release_id], countdown=30)
+        return {"success": False, "error": str(e)}
+
+
+@shared_task
+def fetch_build_log(release_id: int):
+    """
+    拉取构建日志
+
+    Args:
+        release_id: 发布记录 ID
+    """
+    from .models import ReleaseRecord, ReleaseBuildLog
+    from .services import JenkinsService
+
+    try:
+        release = ReleaseRecord.objects.get(pk=release_id)
+    except ReleaseRecord.DoesNotExist:
+        return {"success": False, "error": "发布记录不存在"}
+
+    if not release.jenkins_job_name or not release.jenkins_build_number:
+        return {"success": False, "error": "缺少构建信息"}
+
+    try:
+        jenkins = JenkinsService()
+
+        # 解析 Job 名称和 Folder
+        job_full_name = release.jenkins_job_name
+        parts = job_full_name.split('/')
+        job_name = parts[-1]
+        folder = '/'.join(parts[:-1]) if len(parts) > 1 else None
+
+        # 获取控制台输出
+        log_content = jenkins.get_build_console_output(
+            name=job_name,
+            build_number=release.jenkins_build_number,
+            folder=folder
+        )
+
+        if log_content:
+            # 更新或创建日志记录
+            ReleaseBuildLog.objects.update_or_create(
+                release=release,
+                log_type='console',
+                defaults={'log_content': log_content}
+            )
+            return {"success": True}
+
+        return {"success": False, "error": "获取日志失败"}
+
+    except Exception as e:
+        logger.exception(f"[Celery] 拉取构建日志异常: {e}")
+        return {"success": False, "error": str(e)}

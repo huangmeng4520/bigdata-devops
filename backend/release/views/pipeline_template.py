@@ -70,9 +70,13 @@ class PipelineTemplateViewSet(CustomModelViewSet):
         if is_latest:
             PipelineTemplateVersion.objects.filter(template=template).update(is_latest=False)
         
-        serializer = PipelineTemplateVersionCreateSerializer(data=request.data)
+        # 复制请求数据并添加 template
+        data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+        data['template'] = template.id
+        
+        serializer = PipelineTemplateVersionCreateSerializer(data=data)
         serializer.is_valid(raise_exception=True)
-        serializer.save(template=template, creator=request.user.username)
+        serializer.save(creator=request.user.username)
         
         return Response({'code': 0, 'message': '版本创建成功', 'data': serializer.data})
 

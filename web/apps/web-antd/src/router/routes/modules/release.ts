@@ -68,6 +68,26 @@ const routes: RouteRecordRaw[] = [
         },
         component: () => import('#/views/release/cdConfigExport/index.vue'),
       },
+      // 发布记录
+      {
+        path: '/release/record',
+        name: 'ReleaseRecord',
+        meta: {
+          icon: 'mdi:history',
+          title: '发布记录',
+        },
+        component: () => import('#/views/release/record/index.vue'),
+      },
+      // 发布统计
+      {
+        path: '/release/statistics',
+        name: 'ReleaseStatistics',
+        meta: {
+          icon: 'mdi:chart-bar',
+          title: '发布统计',
+        },
+        component: () => import('#/views/release/statistics/index.vue'),
+      },
     ],
   },
 ];

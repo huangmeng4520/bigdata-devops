@@ -25,10 +25,16 @@ import { $t } from '#/locales';
 
 import { useColumns, useGridFormSchema } from './data';
 import Form from './modules/form.vue';
+import ReleaseModal from './modules/ReleaseModal.vue';
 
 const [FormModal, formModalApi] = useVbenModal({
   connectedComponent: Form,
   destroyOnClose: false,
+});
+
+const [ReleaseModalComp, releaseModalApi] = useVbenModal({
+  connectedComponent: ReleaseModal,
+  destroyOnClose: true,
 });
 
 // 项目列表用于筛选
@@ -158,7 +164,22 @@ function onActionClick({
       onSyncJenkins(row);
       break;
     }
+    case 'release': {
+      onRelease(row);
+      break;
+    }
   }
+}
+
+/**
+ * 发布应用
+ */
+function onRelease(row: ReleaseApplicationApi.Application) {
+  if (!row.ci_template) {
+    message.warning('请先关联 CI 模板');
+    return;
+  }
+  releaseModalApi.setData(row).open();
 }
 
 const [Grid, gridApi] = useVbenVxeGrid({
@@ -229,6 +250,7 @@ const SYNC_STATUS_TEXT: Record<number, string> = {
 <template>
   <Page auto-content-height>
     <FormModal @success="refreshGrid" />
+    <ReleaseModalComp @success="refreshGrid" />
     <Grid table-title="应用列表">
       <template #toolbar-tools>
         <TableAction

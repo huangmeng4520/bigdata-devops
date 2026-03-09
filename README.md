@@ -332,30 +332,39 @@ http://localhost:8083/git_add_group/sugroup_moudel/owner-05.git
 
 pipeline {
     agent any
+
     parameters {
         string(name: 'PROJECT', defaultValue: 'git_add_group', description: '项目名称')
         string(name: 'MODULE', defaultValue: 'sugroup_moudel', description: '模块名称')
         string(name: 'APP', defaultValue: 'owner-05', description: '应用名称')
         string(name: 'BRANCH', defaultValue: 'main', description: '代码分支')
         string(name: 'VERSION', defaultValue: '', description: '版本号（可选）')
+        choice(
+            name: 'ENVIRONMENT',
+            choices: ['', 'test', 'uat', 'prod'],
+            description: '发布环境（若选择，将覆盖分支自动判断）'
+        )
     }
+
     environment {
         DOCKER_REGISTRY = 'https://192.168.3.134/'
         GIT_REPO = "http://192.168.3.134:8083/${params.PROJECT}/${params.MODULE}/${params.APP}.git"
-        // 镜像全名：harbor.internet.com/medicare-payment/service:标签
         IMAGE_BASE = "${DOCKER_REGISTRY}/${params.PROJECT}-${params.MODULE}/${params.APP}"
     }
+
     stages {
         stage('Checkout') {
             steps {
-                git branch: params.BRANCH, url: GIT_REPO,
-            credentialsId: 'gitlab-http-credentials'   // 你设置的 ID
+                git branch: params.BRANCH,
+                    url: GIT_REPO,
+                    credentialsId: 'gitlab-http-credentials'   // 确保此 ID 已在 Jenkins 中配置
             }
         }
+
         stage('Determine Version and Tag') {
             steps {
                 script {
-                    // 如果未传入 VERSION，从文件读取（仅主干或发布分支）
+                    // ----- 版本号处理 -----
                     if (!params.VERSION) {
                         if (params.BRANCH == 'main' || params.BRANCH.startsWith('release/')) {
                             def versionFile = readFile('VERSION').trim()
@@ -367,46 +376,56 @@ pipeline {
                     } else {
                         env.VERSION = params.VERSION
                     }
-                    
-                    // 根据分支确定镜像标签后缀
-                    if (params.BRANCH == 'develop' || params.BRANCH.startsWith('feature/')) {
-                        env.TAG_SUFFIX = 'test'
-                    } else if (params.BRANCH == 'main' || params.BRANCH.startsWith('release/')) {
-                        env.TAG_SUFFIX = 'uat'
-                    } else if (params.BRANCH.startsWith('hotfix/')) {
-                        env.TAG_SUFFIX = 'uat'   // 热修复先发布到UAT验证
+
+                    // ----- 环境（标签后缀）处理 -----
+                    if (params.ENVIRONMENT) {
+                        // 如果用户显式指定了环境，直接使用
+                        env.TAG_SUFFIX = params.ENVIRONMENT
                     } else {
-                        env.TAG_SUFFIX = 'test'
+                        // 否则根据分支自动判断
+                        if (params.BRANCH == 'develop' || params.BRANCH.startsWith('feature/')) {
+                            env.TAG_SUFFIX = 'test'
+                        } else if (params.BRANCH == 'main' || params.BRANCH.startsWith('release/')) {
+                            env.TAG_SUFFIX = 'uat'
+                        } else if (params.BRANCH.startsWith('hotfix/')) {
+                            env.TAG_SUFFIX = 'uat'   // 热修复先发布到UAT验证
+                        } else {
+                            env.TAG_SUFFIX = 'test'
+                        }
                     }
-                    
+
                     env.FULL_TAG = "${env.VERSION}-${env.TAG_SUFFIX}"
                     env.IMAGE = "${IMAGE_BASE}:${env.FULL_TAG}"
+
+                    echo "构建标签: ${env.FULL_TAG}"
+                    echo "镜像全名: ${env.IMAGE}"
                 }
             }
         }
+
         stage('Build & Test') {
             steps {
-                <!-- sh 'mvn clean package'   // 示例，可根据实际语言调整 -->
-                sh 'mvn clean package'   // 示例，可根据实际语言调整
+                // 请根据实际项目替换构建命令
+                sh 'mvn clean package'
             }
         }
+
         stage('Docker Build') {
             steps {
                 sh "docker build -t ${IMAGE} ."
             }
         }
-                stage('Push to Harbor') {
+
+        stage('Push to Harbor') {
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId:'7733a704-bda5-4bf1-a5d9-d5bc26e940e1', // 替换成你第一步中设置的ID
-                    passwordVariable: 'HARBOR_PASS', 
+                    credentialsId: '7733a704-bda5-4bf1-a5d9-d5bc26e940e1', // 你的 Harbor 凭据 ID
+                    passwordVariable: 'HARBOR_PASS',
                     usernameVariable: 'HARBOR_USER'
                 )]) {
                     sh """
-                        # 使用从凭据注入的用户名和密码登录
                         docker login ${DOCKER_REGISTRY} -u ${HARBOR_USER} -p ${HARBOR_PASS}
                         docker push ${IMAGE}
-                        # 可选：登出，清理本地凭证
                         docker logout ${DOCKER_REGISTRY}
                     """
                 }
@@ -420,3 +439,12 @@ pipeline {
 
 
 发布需要考虑是否有sql执行，可以规定固定存放目录，在发布是记录到发布日志，方便回滚是dba进行处理。
+
+问题找到了！trigger_jenkins_build 任务只查找 ApplicationPipelineConfig 表的配置，但该表是空的。
+
+应用关联了 ci_template，但没有具体环境的流水线配置。需要修改逻辑：如果应用有关联 CI 模板，使用应用的全局 jenkins_ci_job。
+
+
+
+
+"{\"type\":\"PUSH_ARTIFACT\",\"occur_at\":1772520153,\"operator\":\"admin\",\"event_data\":{\"resources\":[{\"digest\":\"sha256:5f6399566cce23307827b8aa27f021c3d30cf5082dda45931c9ee035941beb6f\",\"tag\":\"v1\",\"resource_url\":\"harbor.ynbigdata.com/git_add_group-sugroup_moudel/nginx:v1\"}],\"repository\":{\"date_created\":1772520153,\"name\":\"nginx\",\"namespace\":\"git_add_group-sugroup_moudel\",\"repo_full_name\":\"git_add_group-sugroup_moudel/nginx\",\"repo_type\":\"private\"}}}"

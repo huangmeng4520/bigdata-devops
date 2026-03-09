@@ -483,3 +483,157 @@ class CDConfigExport(CoreModel):
 
     def __str__(self):
         return f"{self.application.name} - {self.environment} - v{self.config_version}"
+
+
+# ============================================================
+# 发布管理相关模型
+# ============================================================
+
+class ReleaseRecord(CoreModel):
+    """发布记录"""
+    
+    STATUS_CHOICES = [
+        ('pending', '待发布'),
+        ('approval_pending', '待审批'),
+        ('approved', '已审批'),
+        ('rejected', '已拒绝'),
+        ('building', '构建中'),
+        ('build_success', '构建成功'),
+        ('build_failed', '构建失败'),
+        ('deploying', '部署中'),
+        ('deployed', '已部署'),
+        ('rollback', '已回滚'),
+        ('cancelled', '已取消'),
+    ]
+    
+    # 关联应用
+    application = models.ForeignKey(
+        Application, on_delete=models.CASCADE,
+        related_name='releases', verbose_name="所属应用"
+    )
+    
+    # 发布配置
+    branch = models.CharField(max_length=128, verbose_name="代码分支")
+    environment = models.CharField(
+        max_length=32,
+        choices=ApplicationPipelineConfig.ENVIRONMENT_CHOICES,
+        verbose_name="目标环境"
+    )
+    version = models.CharField(max_length=64, blank=True, null=True, verbose_name="发布版本")
+    
+    # 审批信息
+    require_approval = models.BooleanField(default=False, verbose_name="需要审批")
+    approval_type = models.CharField(max_length=32, blank=True, null=True, verbose_name="审批类型")
+    approvers = models.JSONField(default=list, blank=True, verbose_name="审批人列表")
+    approval_time = models.DateTimeField(null=True, blank=True, verbose_name="审批时间")
+    approval_user = models.CharField(max_length=64, blank=True, null=True, verbose_name="审批人")
+    approval_comment = models.TextField(blank=True, null=True, verbose_name="审批意见")
+    
+    # Jenkins 构建信息
+    jenkins_job_name = models.CharField(max_length=256, blank=True, null=True, verbose_name="Jenkins Job 名称")
+    jenkins_build_number = models.IntegerField(null=True, blank=True, verbose_name="Jenkins 构建号")
+    jenkins_build_url = models.CharField(max_length=512, blank=True, null=True, verbose_name="Jenkins 构建地址")
+    jenkins_build_status = models.CharField(max_length=32, blank=True, null=True, verbose_name="Jenkins 构建状态")
+    jenkins_build_duration = models.IntegerField(null=True, blank=True, verbose_name="构建耗时(毫秒)")
+    
+    # 构建产物
+    docker_image = models.CharField(max_length=256, blank=True, null=True, verbose_name="Docker 镜像")
+    artifact_url = models.CharField(max_length=512, blank=True, null=True, verbose_name="构建产物地址")
+    
+    # 发布状态
+    status = models.CharField(
+        max_length=32, choices=STATUS_CHOICES,
+        default='pending', verbose_name="发布状态"
+    )
+    status_message = models.TextField(blank=True, null=True, verbose_name="状态消息")
+    
+    # 发布人
+    released_by = models.CharField(max_length=64, verbose_name="发布人")
+    
+    class Meta:
+        db_table = "release_record"
+        verbose_name = "发布记录"
+        verbose_name_plural = verbose_name
+        ordering = ["-create_time"]
+
+    def __str__(self):
+        return f"{self.application.name} - {self.branch} - {self.get_status_display()}"
+
+    def can_trigger(self):
+        """是否可以触发构建"""
+        return self.status in ['pending', 'approved', 'build_failed']
+
+    def can_cancel(self):
+        """是否可以取消"""
+        return self.status in ['pending', 'approval_pending', 'building']
+
+    def can_approve(self):
+        """是否可以审批"""
+        return self.status == 'approval_pending'
+
+
+class ReleaseBuildLog(CoreModel):
+    """构建日志"""
+    
+    release = models.ForeignKey(
+        ReleaseRecord, on_delete=models.CASCADE,
+        related_name='build_logs', verbose_name="关联发布记录"
+    )
+    
+    # 日志内容
+    log_content = models.TextField(verbose_name="日志内容")
+    log_type = models.CharField(max_length=32, default='console', verbose_name="日志类型")
+    
+    # 阶段信息
+    stage_name = models.CharField(max_length=64, blank=True, null=True, verbose_name="阶段名称")
+    stage_status = models.CharField(max_length=32, blank=True, null=True, verbose_name="阶段状态")
+    
+    class Meta:
+        db_table = "release_build_log"
+        verbose_name = "构建日志"
+        verbose_name_plural = verbose_name
+        ordering = ["create_time"]
+
+    def __str__(self):
+        return f"{self.release.application.name} - Build #{self.release.jenkins_build_number}"
+
+
+class ApprovalRule(CoreModel):
+    """审批规则"""
+    
+    RULE_TYPE_CHOICES = [
+        ('single', '单人审批'),
+        ('any', '任意一人审批'),
+        ('all', '全部审批'),
+        ('sequential', '顺序审批'),
+    ]
+    
+    name = models.CharField(max_length=64, verbose_name="规则名称")
+    code = models.CharField(max_length=32, unique=True, verbose_name="规则编码")
+    environment = models.CharField(max_length=32, verbose_name="适用环境")
+    rule_type = models.CharField(
+        max_length=32, choices=RULE_TYPE_CHOICES,
+        verbose_name="规则类型"
+    )
+    
+    # 审批人配置: [{"id": 1, "name": "张三", "order": 1}]
+    approvers = models.JSONField(default=list, verbose_name="审批人列表")
+    
+    # 条件配置
+    min_approvers = models.IntegerField(default=1, verbose_name="最少审批人数")
+    
+    # 状态
+    status = models.IntegerField(
+        choices=CommonStatus.choices,
+        default=CommonStatus.ENABLED,
+        verbose_name="状态"
+    )
+    
+    class Meta:
+        db_table = "release_approval_rule"
+        verbose_name = "审批规则"
+        verbose_name_plural = verbose_name
+        ordering = ["-create_time"]
+
+    def __str__(self):
+        return self.name
