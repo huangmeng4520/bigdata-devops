@@ -133,25 +133,13 @@ def create_jenkins_resources(self, app_id: int, force: bool = False):
         logger.error(f"[Celery] 应用不存在: app_id={app_id}")
         return {"success": False, "error": "应用不存在"}
 
+    from .models import ApplicationPipelineConfig
+
     jenkins = JenkinsService()
 
     try:
         app.jenkins_sync_status = 1
         app.save(update_fields=['jenkins_sync_status'])
-
-        if force and app.jenkins_ci_job:
-            app.jenkins_ci_job = None
-            app.jenkins_cd_job = None
-            app.save(update_fields=['jenkins_ci_job', 'jenkins_cd_job'])
-            logger.info(f"[Celery] 强制重新创建，清除现有 Jenkins Jobs")
-
-        if app.jenkins_ci_job:
-            logger.info(f"[Celery] Jenkins Jobs 已存在: {app.jenkins_ci_job}")
-            app.jenkins_sync_status = 2
-            app.jenkins_sync_time = timezone.now()
-            app.jenkins_sync_message = "Jenkins Jobs 已存在"
-            app.save(update_fields=['jenkins_sync_status', 'jenkins_sync_time', 'jenkins_sync_message'])
-            return {"success": True, "skipped": True, "reason": "jobs_exist"}
 
         if not app.git_url:
             logger.warning(f"[Celery] 应用没有 Git URL")
@@ -160,39 +148,59 @@ def create_jenkins_resources(self, app_id: int, force: bool = False):
             app.save(update_fields=['jenkins_sync_status', 'jenkins_sync_message'])
             return {"success": False, "error": "no_git_url"}
 
-        results = jenkins.create_ci_cd_jobs(
-            project_code=app.project.code,
-            module_code=app.module.code,
-            app_code=app.code,
-            git_url=app.git_url,
-            branch=app.build_branch
+        module_code = app.module.code if app.module else app.code
+        configs = ApplicationPipelineConfig.objects.filter(
+            application=app, is_deleted=False
         )
 
+        created_jobs = []
+        for config in configs:
+            env_code = config.environment
+            success = jenkins.create_pipeline_job_with_folder(
+                project_code=app.project.code,
+                module_code=module_code,
+                app_code=app.code,
+                environment_code=env_code,
+                git_url=app.git_url,
+                branch=app.build_branch
+            )
+            if success:
+                job_name = jenkins.get_job_full_name(
+                    app.project.code, module_code, app.code, env_code
+                )
+                ApplicationPipelineConfig.objects.filter(pk=config.pk).update(
+                    jenkins_job_name=job_name
+                )
+                created_jobs.append(job_name)
+
+        all_success = len(created_jobs) >= configs.count() if configs.exists() else False
+
         with transaction.atomic():
-            app.jenkins_ci_job = jenkins.get_job_full_name(
-                app.project.code, app.module.code, app.code, "ci"
-            )
-            app.jenkins_cd_job = jenkins.get_job_full_name(
-                app.project.code, app.module.code, app.code, "cd"
-            )
-            app.jenkins_sync_status = 2
+            app.jenkins_sync_status = 2 if all_success else 3
             app.jenkins_sync_time = timezone.now()
-            app.jenkins_sync_message = "创建成功"
-            app.save(update_fields=["jenkins_ci_job", "jenkins_cd_job", "jenkins_sync_status", "jenkins_sync_time", "jenkins_sync_message"])
+            app.jenkins_sync_message = "创建成功" if all_success else "部分创建失败"
+            app.save(update_fields=["jenkins_sync_status", "jenkins_sync_time", "jenkins_sync_message"])
 
         SyncLog.objects.create(
             app=app,
             project=app.project,
             module=app.module,
             sync_type="jenkins",
-            resource_name=f"{app.jenkins_ci_job}, {app.jenkins_cd_job}",
+            resource_name=", ".join(created_jobs) if created_jobs else app.code,
             action="create",
-            status=1,
-            message=f"创建 Jenkins CI/CD Jobs 成功: CI={results['ci']}, CD={results['cd']}"
+            status=1 if all_success else 0,
+            message=f"创建 Jenkins Jobs 成功: {len(created_jobs)}/{configs.count()}"
         )
 
-        logger.info(f"[Celery] Jenkins Jobs 创建成功")
-        return {"success": True, "results": results}
+        logger.info(f"[Celery] Jenkins Jobs 创建成功: {created_jobs}")
+
+        if configs.exists():
+            try:
+                sync_application_jenkins.delay(app.id)
+            except Exception as e:
+                logger.exception(f"[Celery] 应用 Pipeline 同步任务提交失败: {e}")
+
+        return {"success": all_success, "jobs": created_jobs}
 
     except DevOpsException as e:
         logger.error(f"[Celery] Jenkins 资源创建失败: {e.message}")
@@ -444,64 +452,43 @@ def test_all_connections():
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
 def sync_application_jenkins(self, app_id: int):
     """
-    同步应用的 CI/CD 配置到 Jenkins
+    同步应用的 Pipeline 配置到 Jenkins
 
     Args:
         app_id: Application ID
     """
     from django.utils import timezone
-    from .models import Application, SyncLog
+    from .models import Application, ApplicationPipelineConfig, SyncLog
     from .services import JenkinsService, DevOpsException
 
-    logger.info(f"[Celery] 开始同步应用 Jenkins 配置: app_id={app_id}")
+    logger.info(f"[Celery] 开始同步应用 Pipeline 配置: app_id={app_id}")
 
     try:
-        app = Application.objects.select_related(
-            'project', 'module', 'ci_template', 'cd_template'
-        ).get(pk=app_id)
+        app = Application.objects.select_related('project', 'module').get(pk=app_id)
     except Application.DoesNotExist:
         logger.error(f"[Celery] 应用不存在: app_id={app_id}")
         return {"success": False, "error": "应用不存在"}
 
-    # 更新状态为"同步中"
     app.jenkins_sync_status = 1
     app.save(update_fields=['jenkins_sync_status'])
 
-    results = {"ci": None, "cd": None}
+    configs = ApplicationPipelineConfig.objects.filter(
+        application=app, is_active=True, is_deleted=False,
+        template__isnull=False
+    ).select_related('template', 'environment_strategy')
+
+    results = []
 
     try:
         jenkins = JenkinsService()
-        folder = f"{app.project.code}/{app.module.code}"
+        module_code = app.module.code if app.module else app.code
+        folder = f"{app.project.code}/{module_code}/{app.code}"
 
-        # 同步 CI Job
-        if app.ci_template:
-            result = _sync_single_job(
-                jenkins=jenkins,
-                app=app,
-                template=app.ci_template,
-                variables=app.ci_variables or {},
-                job_type='ci',
-                folder=folder
-            )
-            results["ci"] = result
+        for config in configs:
+            result = _sync_pipeline_config(jenkins, app, config, folder)
+            results.append(result)
 
-        # 同步 CD Job
-        if app.cd_template:
-            result = _sync_single_job(
-                jenkins=jenkins,
-                app=app,
-                template=app.cd_template,
-                variables=app.cd_variables or {},
-                job_type='cd',
-                folder=folder
-            )
-            results["cd"] = result
-
-        # 更新同步状态
-        all_success = all(
-            r is None or r.get("success")
-            for r in [results["ci"], results["cd"]]
-        )
+        all_success = all(r.get("success") for r in results)
 
         with transaction.atomic():
             app.jenkins_sync_status = 2 if all_success else 3
@@ -509,100 +496,146 @@ def sync_application_jenkins(self, app_id: int):
             app.jenkins_sync_message = "同步成功" if all_success else "部分同步失败"
             app.save(update_fields=['jenkins_sync_status', 'jenkins_sync_time', 'jenkins_sync_message'])
 
-        logger.info(f"[Celery] 应用 Jenkins 配置同步完成: app_id={app_id}, results={results}")
+        logger.info(f"[Celery] 应用 Pipeline 配置同步完成: app_id={app_id}, results={results}")
         return {"success": all_success, "results": results}
 
     except DevOpsException as e:
-        logger.error(f"[Celery] Jenkins 配置同步失败: {e.message}")
-
+        logger.error(f"[Celery] Pipeline 配置同步失败: {e.message}")
         app.jenkins_sync_status = 3
         app.jenkins_sync_message = e.message
         app.save(update_fields=['jenkins_sync_status', 'jenkins_sync_message'])
-
         SyncLog.objects.create(
-            app=app,
-            project=app.project,
-            module=app.module,
+            app=app, project=app.project, module=app.module,
             sync_type="jenkins",
-            resource_name=f"{app.project.code}/{app.module.code}/{app.code}",
-            action="update",
-            status=0,
-            message=e.message
+            resource_name=f"{app.project.code}/{module_code}/{app.code}",
+            action="update", status=0, message=e.message
         )
-
         raise self.retry(exc=e)
-
     except Exception as e:
-        logger.exception(f"[Celery] Jenkins 配置同步异常: {e}")
-
+        logger.exception(f"[Celery] Pipeline 配置同步异常: {e}")
         app.jenkins_sync_status = 3
         app.jenkins_sync_message = str(e)[:512]
         app.save(update_fields=['jenkins_sync_status', 'jenkins_sync_message'])
-
         return {"success": False, "error": str(e)}
 
 
-def _sync_single_job(jenkins, app, template, variables, job_type, folder):
-    """同步单个 Job (CI 或 CD)"""
-    from .models import SyncLog
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def sync_jenkins_config(self, config_id):
+    """同步单个 Pipeline 配置到 Jenkins（独立任务，由 generate_and_sync / sync_to_jenkins 触发）"""
+    from django.utils import timezone
+    from .models import ApplicationPipelineConfig, SyncLog
+    from .services import JenkinsService, DevOpsException
+    from .pipeline_utils import get_template_content, build_pipeline_variables
 
-    # 获取最新版本
-    latest_version = template.latest_version
-    if not latest_version:
-        return {"success": False, "error": "模板没有可用版本"}
+    config = ApplicationPipelineConfig.objects.select_related(
+        'application', 'application__project', 'application__module',
+        'template', 'template_version'
+    ).get(pk=config_id)
 
-    # 合并变量
-    content = latest_version.content
-    template_variables = latest_version.variables or {}
+    app = config.application
 
-    # 先使用模板默认变量
-    final_variables = {}
-    if template_variables and isinstance(template_variables, dict):
-        for var in template_variables.get('variables', []):
-            var_name = var.get('name')
-            if var_name:
-                final_variables[var_name] = var.get('default', '')
+    try:
+        latest_version = config.get_config_version()
+        if latest_version and latest_version.content:
+            content = latest_version.content
+        else:
+            template_content, template_variables = get_template_content(config)
+            if not template_content:
+                raise ValueError(f"配置 {config_id} 没有关联模板或模板版本")
+            variables = build_pipeline_variables(app, config, template_variables)
+            content = template_content
+            for key, value in variables.items():
+                content = content.replace(f'${{{key}}}', str(value))
 
-    # 用户变量覆盖
-    final_variables.update(variables)
+        jenkins = JenkinsService()
+        module_code = app.module.code if app.module else app.code
+        folder = f"{app.project.code}/{module_code}/{app.code}"
+        env_code = config.environment
 
-    # 替换变量
-    for key, value in final_variables.items():
-        content = content.replace(f'${{{key}}}', str(value))
+        success = jenkins.update_job_config(
+            name=env_code,
+            folder=folder,
+            jenkinsfile_content=content,
+            git_url=app.git_url,
+            branch=app.build_branch,
+            description=f"Pipeline for {app.project.name}/{module_code}/{app.name}/{env_code}"
+        )
 
-    # Job 名称
-    job_name = f"{app.code}-{job_type}"
+        if success:
+            full_job_name = f"{folder}/{env_code}"
+            ApplicationPipelineConfig.objects.filter(pk=config.pk).update(
+                jenkins_job_name=full_job_name,
+                jenkins_sync_status=2,
+                jenkins_sync_time=timezone.now(),
+                jenkins_sync_message="同步成功"
+            )
+            return {"success": True, "job_name": full_job_name}
+        else:
+            ApplicationPipelineConfig.objects.filter(pk=config.pk).update(
+                jenkins_sync_status=3,
+                jenkins_sync_message="更新 Jenkins Job 失败"
+            )
+            return {"success": False, "error": "更新 Jenkins Job 失败"}
+    except DevOpsException as e:
+        logger.error(f"[Celery] Pipeline 同步失败: config_id={config_id}, error={e.message}")
+        ApplicationPipelineConfig.objects.filter(pk=config.pk).update(
+            jenkins_sync_status=3,
+            jenkins_sync_message=e.message
+        )
+        raise self.retry(exc=e)
+    except Exception as e:
+        logger.exception(f"[Celery] Pipeline 同步异常: config_id={config_id}")
+        ApplicationPipelineConfig.objects.filter(pk=config.pk).update(
+            jenkins_sync_status=3,
+            jenkins_sync_message=str(e)[:512]
+        )
+        return {"success": False, "error": str(e)}
 
-    # 同步到 Jenkins
+
+def _sync_pipeline_config(jenkins, app, config, folder):
+    """同步单个 Pipeline 配置到 Jenkins（被 sync_application_jenkins 调用）"""
+    from .models import SyncLog, ApplicationPipelineVersion
+    from .pipeline_utils import get_template_content, build_pipeline_variables
+
+    latest_version = ApplicationPipelineVersion.objects.filter(config=config).order_by('-version').first()
+    if latest_version and latest_version.content:
+        content = latest_version.content
+    else:
+        template_content, template_variables = get_template_content(config)
+        if not template_content:
+            return {"success": False, "error": f"配置 {config.id} 没有关联模板或模板版本"}
+        variables = build_pipeline_variables(app, config, template_variables)
+        content = template_content
+        for key, value in variables.items():
+            content = content.replace(f'${{{key}}}', str(value))
+
+    env_code = config.environment
+    job_name = env_code
+    job_folder = folder
+
+    module_name = app.module.name if app.module else app.name
     success = jenkins.update_job_config(
         name=job_name,
-        folder=folder,
+        folder=job_folder,
         jenkinsfile_content=content,
         git_url=app.git_url,
         branch=app.build_branch,
-        description=f"{job_type.upper()} for {app.project.name}/{app.module.name}/{app.name}"
+        description=f"Pipeline for {app.project.name}/{module_name}/{app.name}/{env_code}"
     )
 
     if success:
-        # 更新 Job 名称
-        if job_type == 'ci':
-            app.jenkins_ci_job = f"{folder}/{job_name}"
-        else:
-            app.jenkins_cd_job = f"{folder}/{job_name}"
-
-        # 记录日志
-        SyncLog.objects.create(
-            app=app,
-            project=app.project,
-            module=app.module,
-            sync_type="jenkins",
-            resource_name=f"{folder}/{job_name}",
-            action="update",
-            status=1,
-            message=f"同步 {job_type.upper()} 配置成功: {template.name} v{latest_version.version}"
+        full_job_name = f"{job_folder}/{job_name}"
+        ApplicationPipelineConfig.objects.filter(pk=config.pk).update(
+            jenkins_job_name=full_job_name
         )
-
-        return {"success": True, "job_name": f"{folder}/{job_name}"}
+        SyncLog.objects.create(
+            app=app, project=app.project, module=app.module,
+            sync_type="jenkins",
+            resource_name=full_job_name,
+            action="update", status=1,
+            message=f"同步 Pipeline 配置成功 ({env_code})"
+        )
+        return {"success": True, "job_name": full_job_name}
     else:
         return {"success": False, "error": "更新 Jenkins Job 失败"}
 
@@ -628,7 +661,7 @@ def trigger_jenkins_build(self, release_id: int):
     try:
         release = ReleaseRecord.objects.select_related(
             'application', 'application__project', 'application__module',
-            'application__ci_template'
+            'application__code_repository'
         ).get(pk=release_id)
     except ReleaseRecord.DoesNotExist:
         logger.error(f"[Celery] 发布记录不存在: release_id={release_id}")
@@ -637,30 +670,22 @@ def trigger_jenkins_build(self, release_id: int):
     application = release.application
 
     try:
-        # 优先查找环境的 CI 配置
         from .models import ApplicationPipelineConfig
         pipeline_config = ApplicationPipelineConfig.objects.filter(
             application=application,
-            config_type='ci',
             environment=release.environment,
             is_active=True
         ).first()
 
-        # 确定使用的 Jenkins Job
         jenkins_job_name = None
         if pipeline_config and pipeline_config.jenkins_job_name:
-            # 使用环境特定的 Job
             jenkins_job_name = pipeline_config.jenkins_job_name
-        elif application.ci_template and application.jenkins_ci_job:
-            # 使用应用关联的全局 CI Job
-            jenkins_job_name = application.jenkins_ci_job
-            logger.info(f"[Celery] 使用应用全局 CI Job: {jenkins_job_name}")
 
         if not jenkins_job_name:
             release.status = 'build_failed'
-            release.status_message = f"未找到 {release.environment} 环境的 CI 配置，请先同步 Jenkins 配置"
+            release.status_message = f"未找到 {release.environment} 环境的 Pipeline 配置，请先同步 Jenkins 配置"
             release.save(update_fields=['status', 'status_message'])
-            return {"success": False, "error": "未找到 CI 配置"}
+            return {"success": False, "error": "未找到 Pipeline 配置"}
 
         jenkins = JenkinsService()
 
@@ -671,11 +696,8 @@ def trigger_jenkins_build(self, release_id: int):
             release.save(update_fields=['status', 'status_message'])
             return {"success": False, "error": "应用所属项目信息不完整"}
 
-        if not application.module or not application.module.code:
-            release.status = 'build_failed'
-            release.status_message = "应用所属模块信息不完整，无法触发构建"
-            release.save(update_fields=['status', 'status_message'])
-            return {"success": False, "error": "应用所属模块信息不完整"}
+        # 处理 module 为空的情况
+        module_code = application.module.code if application.module else application.code
 
         if not application.code:
             release.status = 'build_failed'
@@ -695,14 +717,42 @@ def trigger_jenkins_build(self, release_id: int):
             release.save(update_fields=['status', 'status_message'])
             return {"success": False, "error": "发布环境不能为空"}
 
+        # 获取代码仓库信息
+        # 构建配置从 Application 获取：code_subpath, build_command, package_name
+        code_repo = None
+        git_url = ''
+        code_subpath = application.code_subpath or ''
+        build_command = application.build_command or ''
+        package_name = ''
+
+        if application.code_repository:
+            code_repo = application.code_repository
+            git_url = code_repo.git_url or ''
+            logger.info(f"[Celery] 使用代码仓库: name={code_repo.name}, git_url={git_url}")
+        elif application.git_url:
+            # 兼容旧数据：使用应用原有的 git_url
+            git_url = application.git_url or ''
+            logger.info(f"[Celery] 使用应用原有字段: git_url={git_url}")
+
+        # 检查 Git URL
+        if not git_url:
+            release.status = 'build_failed'
+            release.status_message = "代码仓库地址为空，请先关联代码仓库或配置 Git 仓库地址"
+            release.save(update_fields=['status', 'status_message'])
+            return {"success": False, "error": "代码仓库地址为空"}
+
         # 构建参数 - 完整的 Jenkins Job 参数
         parameters = {
             'PROJECT': application.project.code,
-            'MODULE': application.module.code,
+            'MODULE': module_code,
             'APP': application.code,
             'BRANCH': release.branch,
             'VERSION': release.version or '',
             'ENVIRONMENT': release.environment,
+            'GIT_REPO': git_url,
+            'CODE_SUBPATH': code_subpath,
+            'BUILD_COMMAND': build_command,
+            'PACKAGE_NAME': package_name,
         }
 
         logger.info(f"[Celery] 构建参数: {parameters}")
@@ -900,4 +950,103 @@ def fetch_build_log(release_id: int):
 
     except Exception as e:
         logger.exception(f"[Celery] 拉取构建日志异常: {e}")
+        return {"success": False, "error": str(e)}
+
+
+# ============================================================
+# 代码仓库同步任务
+# ============================================================
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def sync_code_repository_gitlab(self, repo_id: int):
+    """
+    同步代码仓库到 GitLab
+
+    Args:
+        repo_id: 代码仓库 ID
+    """
+    from django.utils import timezone
+    from .models import CodeRepository, SyncLog
+    from .services import GitLabService, DevOpsException
+
+    logger.info(f"[Celery] 开始同步代码仓库到 GitLab: repo_id={repo_id}")
+
+    try:
+        repo = CodeRepository.objects.select_related('project', 'module').get(pk=repo_id)
+    except CodeRepository.DoesNotExist:
+        logger.error(f"[Celery] 代码仓库不存在: repo_id={repo_id}")
+        return {"success": False, "error": "代码仓库不存在"}
+
+    gitlab = GitLabService()
+
+    try:
+        # 严格按照：组 -> 子组 -> 仓库 的逻辑
+        # 1. 必须先有项目（Project）的 GitLab Group ID
+        # 2. 模块（Module）的 GitLab Subgroup ID 应该是项目 Group 的子组
+        # 3. 代码仓库创建在模块的 Subgroup 下（如果有），否则创建在项目的 Group 下
+        
+        if not repo.project or not repo.project.gitlab_group_id:
+            logger.warning(f"[Celery] 代码仓库没有关联项目或项目没有 GitLab Group ID")
+            return {"success": False, "error": "请先在项目中配置 GitLab Group ID"}
+        
+        # 项目 Group ID（必须的根节点）
+        project_group_id = repo.project.gitlab_group_id
+        logger.info(f"[Celery] 使用项目的 GitLab Group: {project_group_id}")
+        
+        # 优先使用模块的 Subgroup（子组），作为项目的子组
+        if repo.module and repo.module.gitlab_subgroup_id:
+            namespace_id = repo.module.gitlab_subgroup_id
+            logger.info(f"[Celery] 使用模块的 GitLab Subgroup: {namespace_id}")
+        else:
+            # 没有模块则使用项目的 Group
+            namespace_id = project_group_id
+            logger.info(f"[Celery] 使用项目的 GitLab Group: {namespace_id}")
+
+        project = gitlab.create_project(
+            name=repo.name,
+            path=repo.code,
+            namespace_id=namespace_id,
+            description=repo.description or '',
+            default_branch=repo.default_branch or 'main'
+        )
+
+        with transaction.atomic():
+            repo.gitlab_project_id = project.get("id")
+            if not repo.git_url:
+                repo.git_url = project.get("ssh_url_to_repo", "")
+            if not repo.git_http_url:
+                repo.git_http_url = project.get("http_url_to_repo", "")
+            repo.save(update_fields=['gitlab_project_id', 'git_url', 'git_http_url'])
+
+        SyncLog.objects.create(
+            project=repo.project,
+            module=repo.module,
+            app=None,
+            sync_type="gitlab",
+            resource_name=project.get("path_with_namespace", repo.code),
+            action="create",
+            status=1,
+            message=f"同步代码仓库到 GitLab 成功: {project.get('web_url', '')}"
+        )
+
+        logger.info(f"[Celery] 代码仓库同步成功: {project.get('id')}")
+        return {"success": True, "gitlab_project_id": project.get("id")}
+
+    except DevOpsException as e:
+        logger.error(f"[Celery] 代码仓库同步失败: {e.message}")
+
+        SyncLog.objects.create(
+            project=repo.project,
+            module=repo.module,
+            app=None,
+            sync_type="gitlab",
+            resource_name=repo.code,
+            action="create",
+            status=0,
+            message=e.message
+        )
+
+        raise self.retry(exc=e)
+    except Exception as e:
+        logger.exception(f"[Celery] 代码仓库同步异常: {e}")
         return {"success": False, "error": str(e)}

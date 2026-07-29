@@ -4,7 +4,7 @@
 """
 from rest_framework import serializers
 from .models import (
-    Project, Module, Application, ConfigPackage, SyncLog, Template,
+    Project, Module, Application, CodeRepository, ConfigPackage, SyncLog,
     PipelineTemplate, PipelineTemplateVersion,
     ApplicationPipelineConfig, ApplicationPipelineVersion,
     EnvironmentStrategy, CDConfigExport,
@@ -17,6 +17,7 @@ class ProjectSerializer(serializers.ModelSerializer):
     module_count = serializers.SerializerMethodField()
     app_count = serializers.SerializerMethodField()
     status_display = serializers.CharField(source='get_status_display', read_only=True)
+    gitlab_group_url = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Project
@@ -28,6 +29,15 @@ class ProjectSerializer(serializers.ModelSerializer):
 
     def get_app_count(self, obj):
         return obj.applications.filter(is_deleted=False).count()
+
+    def get_gitlab_group_url(self, obj):
+        if not obj.gitlab_group_id:
+            return None
+        from release.services.base import ConfigService
+        gitlab_url = ConfigService.get(ConfigService.GITLAB_URL, default="")
+        if not gitlab_url:
+            return None
+        return f"{gitlab_url.rstrip('/')}/{obj.code}"
 
 
 class ProjectCreateSerializer(serializers.ModelSerializer):
@@ -41,7 +51,9 @@ class ModuleSerializer(serializers.ModelSerializer):
     """模块序列化器"""
     project_name = serializers.CharField(source="project.name", read_only=True)
     app_count = serializers.SerializerMethodField()
+    repo_count = serializers.SerializerMethodField()
     status_display = serializers.CharField(source='get_status_display', read_only=True)
+    gitlab_subgroup_url = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Module
@@ -50,6 +62,18 @@ class ModuleSerializer(serializers.ModelSerializer):
 
     def get_app_count(self, obj):
         return obj.applications.filter(is_deleted=False).count()
+
+    def get_repo_count(self, obj):
+        return obj.code_repositories.filter(is_deleted=False).count()
+
+    def get_gitlab_subgroup_url(self, obj):
+        if not obj.gitlab_subgroup_id:
+            return None
+        from release.services.base import ConfigService
+        gitlab_url = ConfigService.get(ConfigService.GITLAB_URL, default="")
+        if not gitlab_url:
+            return None
+        return f"{gitlab_url.rstrip('/')}/{obj.project.code}/{obj.code}"
 
 
 class ModuleCreateSerializer(serializers.ModelSerializer):
@@ -65,22 +89,50 @@ class ApplicationSerializer(serializers.ModelSerializer):
     module_name = serializers.CharField(source="module.name", read_only=True)
     app_type_display = serializers.CharField(source="get_app_type_display", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
-    ci_template_name = serializers.CharField(source="ci_template.name", read_only=True)
-    cd_template_name = serializers.CharField(source="cd_template.name", read_only=True)
     jenkins_sync_status_display = serializers.CharField(source="get_jenkins_sync_status_display", read_only=True)
     gitlab_sync_status_display = serializers.CharField(source="get_gitlab_sync_status_display", read_only=True)
     harbor_sync_status_display = serializers.CharField(source="get_harbor_sync_status_display", read_only=True)
+    code_repository_name = serializers.CharField(source="code_repository.name", read_only=True)
+    code_repository_git_url = serializers.CharField(source="code_repository.git_url", read_only=True)
 
     class Meta:
         model = Application
         fields = "__all__"
         read_only_fields = [
             "creator", "modifier", "create_time", "update_time",
-            "git_url", "gitlab_project_id", "jenkins_ci_job", "jenkins_cd_job", "harbor_project",
+            "git_url", "gitlab_project_id", "harbor_project",
             "jenkins_sync_status", "jenkins_sync_time", "jenkins_sync_message",
             "gitlab_sync_status", "gitlab_sync_time", "gitlab_sync_message",
             "harbor_sync_status", "harbor_sync_time", "harbor_sync_message"
         ]
+
+
+class CodeRepositorySerializer(serializers.ModelSerializer):
+    """代码仓库序列化器"""
+    project_name = serializers.CharField(source="project.name", read_only=True)
+    module_name = serializers.CharField(source="module.name", read_only=True)
+    app_count = serializers.SerializerMethodField()
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    repository_type_display = serializers.CharField(source="get_repository_type_display", read_only=True)
+
+    def get_app_count(self, obj):
+        return obj.applications.filter(is_deleted=False).count()
+
+    class Meta:
+        model = CodeRepository
+        fields = "__all__"
+        read_only_fields = ["creator", "modifier", "create_time", "update_time", "gitlab_project_id", "git_url", "git_http_url"]
+
+
+class CodeRepositoryCreateSerializer(serializers.ModelSerializer):
+    """代码仓库创建序列化器"""
+    class Meta:
+        model = CodeRepository
+        fields = [
+            "project", "module", "name", "code", "repository_type",
+            "default_branch", "status", "description"
+        ]
+        read_only_fields = ["git_url", "git_http_url"]
 
 
 class ApplicationCreateSerializer(serializers.ModelSerializer):
@@ -89,26 +141,50 @@ class ApplicationCreateSerializer(serializers.ModelSerializer):
         model = Application
         fields = [
             "project", "module", "name", "code", "description",
-            "app_type", "build_branch", "dockerfile_path", "status", "sort",
-            "ci_template", "cd_template", "ci_variables", "cd_variables"
+            "app_type", "build_command", "build_branch", "dockerfile_path",
+            "status", "sort", "code_repository", "code_subpath"
         ]
+
+    def create(self, validated_data):
+        instance = super().create(validated_data)
+        # 从关联的代码仓库中获取 git_url
+        if instance.code_repository and instance.code_repository.git_url:
+            instance.git_url = instance.code_repository.git_url
+            instance.gitlab_project_id = instance.code_repository.gitlab_project_id
+            instance.save(update_fields=['git_url', 'gitlab_project_id'])
+        return instance
 
     def validate(self, data):
         """验证模块是否属于所选项目"""
         module = data.get('module')
         project = data.get('project')
+        code = data.get('code')
+        
+        # 模块是可选的，只有当选择了模块时才验证
         if module and project and module.project_id != project.id:
             raise serializers.ValidationError({"module": "模块不属于所选项目"})
 
-        # 验证 CI 模板类型
-        ci_template = data.get('ci_template')
-        if ci_template and ci_template.template_type != 'ci':
-            raise serializers.ValidationError({"ci_template": "CI 模板类型不正确"})
-
-        # 验证 CD 模板类型
-        cd_template = data.get('cd_template')
-        if cd_template and cd_template.template_type != 'cd':
-            raise serializers.ValidationError({"cd_template": "CD 模板类型不正确"})
+        # 验证应用代码唯一性
+        if project and code:
+            queryset = Application.objects.filter(
+                project=project, code=code, is_deleted=False
+            )
+            if module:
+                queryset = queryset.filter(module=module)
+                # 更新时排除自身
+                if self.instance:
+                    queryset = queryset.exclude(pk=self.instance.pk)
+                exists = queryset.exists()
+                if exists:
+                    raise serializers.ValidationError({"code": "该模块下已存在相同编码的应用"})
+            else:
+                queryset = queryset.filter(module__isnull=True)
+                # 更新时排除自身
+                if self.instance:
+                    queryset = queryset.exclude(pk=self.instance.pk)
+                exists = queryset.exists()
+                if exists:
+                    raise serializers.ValidationError({"code": "该项目下（无模块）已存在相同编码的应用"})
 
         return data
 
@@ -138,26 +214,8 @@ class SyncLogSerializer(serializers.ModelSerializer):
         read_only_fields = ["create_time"]
 
 
-class TemplateSerializer(serializers.ModelSerializer):
-    """发布模板序列化器"""
-    template_type_display = serializers.CharField(source="get_template_type_display", read_only=True)
-    status_display = serializers.CharField(source="get_status_display", read_only=True)
-
-    class Meta:
-        model = Template
-        fields = "__all__"
-        read_only_fields = ["creator", "modifier", "create_time", "update_time"]
-
-
-class TemplateCreateSerializer(serializers.ModelSerializer):
-    """发布模板创建序列化器"""
-    class Meta:
-        model = Template
-        fields = ["name", "code", "template_type", "app_type", "content", "description", "status"]
-
-
 # ============================================================
-# CI/CD 模板系统序列化器
+# 流水线模板系统序列化器
 # ============================================================
 
 class PipelineTemplateVersionSerializer(serializers.ModelSerializer):
@@ -189,7 +247,6 @@ class PipelineTemplateVersionCreateSerializer(serializers.ModelSerializer):
 
 class PipelineTemplateSerializer(serializers.ModelSerializer):
     """流水线模板序列化器"""
-    template_type_display = serializers.CharField(source='get_template_type_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     version_count = serializers.SerializerMethodField()
     latest_version = serializers.SerializerMethodField()
@@ -213,7 +270,6 @@ class PipelineTemplateCreateSerializer(serializers.ModelSerializer):
     """流水线模板创建序列化器"""
     name = serializers.CharField(required=True, min_length=1)
     code = serializers.CharField(required=True, min_length=1)
-    template_type = serializers.CharField(required=True)
     language = serializers.CharField(required=True, min_length=1)
     language_version = serializers.CharField(required=False, allow_blank=True, default='')
     framework = serializers.CharField(required=False, allow_blank=True, default='')
@@ -221,7 +277,7 @@ class PipelineTemplateCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PipelineTemplate
-        fields = ["id", "name", "code", "template_type", "language", "language_version", "framework", "description", "is_official", "status"]
+        fields = ["id", "name", "code", "language", "language_version", "framework", "description", "is_official", "status"]
         read_only_fields = ["id"]
 
     def validate_code(self, value):
@@ -262,7 +318,6 @@ class ApplicationPipelineVersionSerializer(serializers.ModelSerializer):
 class ApplicationPipelineConfigSerializer(serializers.ModelSerializer):
     """应用流水线配置序列化器"""
     application_name = serializers.CharField(source="application.name", read_only=True)
-    config_type_display = serializers.CharField(source='get_config_type_display', read_only=True)
     environment_display = serializers.CharField(source='get_environment_display', read_only=True)
     template_name = serializers.CharField(source="template.name", read_only=True)
     template_version_name = serializers.SerializerMethodField()
@@ -291,14 +346,14 @@ class ApplicationPipelineConfigCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = ApplicationPipelineConfig
         fields = [
-            "application", "config_type", "environment", "template", "template_version",
-            "custom_content", "variables", "stages_config", "is_active"
+            "application", "environment", "template", "template_version",
+            "variables", "stages_config", "is_active"
         ]
+        validators = []
 
 
 class EnvironmentStrategySerializer(serializers.ModelSerializer):
     """环境策略序列化器"""
-    pipeline_mode_display = serializers.CharField(source='get_pipeline_mode_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
 
     class Meta:
@@ -311,14 +366,12 @@ class EnvironmentStrategyCreateSerializer(serializers.ModelSerializer):
     """环境策略创建序列化器"""
     name = serializers.CharField(required=False, allow_blank=True, default='')
     code = serializers.CharField(required=False, allow_blank=True, default='')
-    ci_jenkins = serializers.CharField(required=False, allow_blank=True, default='')
-    cd_jenkins = serializers.CharField(required=False, allow_blank=True, default='')
     description = serializers.CharField(required=False, allow_blank=True, default='')
 
     class Meta:
         model = EnvironmentStrategy
         fields = [
-            "name", "code", "environment", "pipeline_mode", "ci_jenkins", "cd_jenkins",
+            "name", "code", "environment",
             "requires_approval", "auto_deploy", "description", "is_default", "status"
         ]
 
@@ -380,7 +433,8 @@ class ReleaseRecordSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "creator", "modifier", "create_time", "update_time",
             "jenkins_build_number", "jenkins_build_url", "jenkins_build_status",
-            "jenkins_build_duration", "docker_image", "artifact_url"
+            "jenkins_build_duration", "docker_image", "artifact_url",
+            "conversation_id",
         ]
 
 

@@ -160,10 +160,8 @@ export interface BuildLog {
 export interface Environment {
   code: string;
   name: string;
-  has_ci_config: boolean;
-  has_cd_config: boolean;
+  has_pipeline_config: boolean;
   requires_approval: boolean;
-  pipeline_mode: 'integrated' | 'separated';
 }
 
 export interface Branch {

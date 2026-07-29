@@ -4,7 +4,7 @@
 """
 import django_filters
 from .models import (
-    Project, Module, Application, ConfigPackage, SyncLog, Template,
+    Project, Module, Application, CodeRepository, ConfigPackage, SyncLog,
     PipelineTemplate, PipelineTemplateVersion,
     ApplicationPipelineConfig, ApplicationPipelineVersion,
     EnvironmentStrategy, CDConfigExport,
@@ -21,6 +21,20 @@ class ProjectFilter(django_filters.FilterSet):
     class Meta:
         model = Project
         fields = ['name', 'code', 'status']
+
+
+class CodeRepositoryFilter(django_filters.FilterSet):
+    """代码仓库过滤器"""
+    name = django_filters.CharFilter(lookup_expr='icontains')
+    code = django_filters.CharFilter(lookup_expr='icontains')
+    project = django_filters.NumberFilter()
+    module = django_filters.NumberFilter()
+    repository_type = django_filters.CharFilter()
+    status = django_filters.NumberFilter()
+
+    class Meta:
+        model = CodeRepository
+        fields = ['name', 'code', 'project', 'module', 'repository_type', 'status']
 
 
 class ModuleFilter(django_filters.FilterSet):
@@ -41,12 +55,13 @@ class ApplicationFilter(django_filters.FilterSet):
     code = django_filters.CharFilter(lookup_expr='icontains')
     project = django_filters.NumberFilter(field_name='project_id')
     module = django_filters.NumberFilter(field_name='module_id')
+    code_repository = django_filters.NumberFilter(field_name='code_repository_id')
     app_type = django_filters.CharFilter()
     status = django_filters.NumberFilter()
 
     class Meta:
         model = Application
-        fields = ['name', 'code', 'project', 'module', 'app_type', 'status']
+        fields = ['name', 'code', 'project', 'module', 'code_repository', 'app_type', 'status']
 
 
 class ConfigPackageFilter(django_filters.FilterSet):
@@ -73,28 +88,14 @@ class SyncLogFilter(django_filters.FilterSet):
         fields = ['sync_type', 'action', 'status', 'project', 'module', 'app']
 
 
-class TemplateFilter(django_filters.FilterSet):
-    """模板过滤器"""
-    name = django_filters.CharFilter(lookup_expr='icontains')
-    code = django_filters.CharFilter(lookup_expr='icontains')
-    template_type = django_filters.CharFilter()
-    app_type = django_filters.CharFilter()
-    status = django_filters.NumberFilter()
-
-    class Meta:
-        model = Template
-        fields = ['name', 'code', 'template_type', 'app_type', 'status']
-
-
 # ============================================================
-# CI/CD 模板系统过滤器
+# 流水线模板系统过滤器
 # ============================================================
 
 class PipelineTemplateFilter(django_filters.FilterSet):
     """流水线模板过滤器"""
     name = django_filters.CharFilter(lookup_expr='icontains')
     code = django_filters.CharFilter(lookup_expr='icontains')
-    template_type = django_filters.CharFilter()
     language = django_filters.CharFilter(lookup_expr='icontains')
     framework = django_filters.CharFilter(lookup_expr='icontains')
     is_official = django_filters.BooleanFilter()
@@ -102,7 +103,7 @@ class PipelineTemplateFilter(django_filters.FilterSet):
 
     class Meta:
         model = PipelineTemplate
-        fields = ['name', 'code', 'template_type', 'language', 'framework', 'is_official', 'status']
+        fields = ['name', 'code', 'language', 'framework', 'is_official', 'status']
 
 
 class PipelineTemplateVersionFilter(django_filters.FilterSet):
@@ -120,14 +121,13 @@ class PipelineTemplateVersionFilter(django_filters.FilterSet):
 class ApplicationPipelineConfigFilter(django_filters.FilterSet):
     """应用流水线配置过滤器"""
     application = django_filters.NumberFilter(field_name='application_id')
-    config_type = django_filters.CharFilter()
     environment = django_filters.CharFilter()
     template = django_filters.NumberFilter(field_name='template_id')
     is_active = django_filters.BooleanFilter()
 
     class Meta:
         model = ApplicationPipelineConfig
-        fields = ['application', 'config_type', 'environment', 'template', 'is_active']
+        fields = ['application', 'environment', 'template', 'is_active']
 
 
 class ApplicationPipelineVersionFilter(django_filters.FilterSet):
@@ -146,13 +146,12 @@ class EnvironmentStrategyFilter(django_filters.FilterSet):
     name = django_filters.CharFilter(lookup_expr='icontains')
     code = django_filters.CharFilter(lookup_expr='icontains')
     environment = django_filters.CharFilter()
-    pipeline_mode = django_filters.CharFilter()
     is_default = django_filters.BooleanFilter()
     status = django_filters.NumberFilter()
 
     class Meta:
         model = EnvironmentStrategy
-        fields = ['name', 'code', 'environment', 'pipeline_mode', 'is_default', 'status']
+        fields = ['name', 'code', 'environment', 'is_default', 'status']
 
 
 class CDConfigExportFilter(django_filters.FilterSet):

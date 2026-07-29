@@ -24,9 +24,11 @@ class CustomModelViewSet(viewsets.ModelViewSet, ExportMixin):
     enable_soft_delete = False
 
     def get_required_permission(self):
-        # 约定：system:menu:create
+        # 约定：system:menu:create / release:pipeline_template:query
+        from utils.string_utils import camel_to_snake
         app_label = self.queryset.model._meta.app_label
-        model_name = self.queryset.model._meta.model_name
+        # 类名转蛇形（CodeRepository -> code_repository），与前端按钮码（下划线）保持一致
+        model_name = camel_to_snake(self.queryset.model.__name__)
         action = self.action  # 'create', 'update', 'destroy', 'list', 'retrieve'
         # 只对增删改查等操作做权限控制
         action_map = {
@@ -39,8 +41,12 @@ class CustomModelViewSet(viewsets.ModelViewSet, ExportMixin):
         }
         if action in action_map:
             perm_action = action_map[action]
+        elif action:
+            # 自定义 action：方法名下划线转连字符，与按钮码约定一致
+            # （sync_gitlab -> sync-gitlab）
+            perm_action = action.replace('_', '-')
         else:
-            perm_action = action  # 如 sync、import、export
+            return None
         return f"{app_label}:{model_name}:{perm_action}"
 
     def get_permissions(self):

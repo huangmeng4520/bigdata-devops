@@ -1,21 +1,11 @@
 import { requestClient } from '#/api/request';
 
-// 流水线模式选项
-export const PIPELINE_MODE_OPTIONS = [
-  { label: 'CI/CD 合并', value: 'integrated' },
-  { label: 'CI/CD 分离', value: 'separated' },
-];
-
 export namespace EnvironmentStrategyApi {
   export interface Strategy {
     id: number;
     name: string;
     code: string;
     environment: string;
-    pipeline_mode: 'integrated' | 'separated';
-    pipeline_mode_display?: string;
-    ci_jenkins?: string;
-    cd_jenkins?: string;
     requires_approval: boolean;
     auto_deploy: boolean;
     description?: string;
@@ -34,7 +24,6 @@ export namespace EnvironmentStrategyApi {
     name?: string;
     code?: string;
     environment?: string;
-    pipeline_mode?: string;
     is_default?: boolean;
     status?: number;
   }

@@ -139,6 +139,21 @@ class Role(CoreModel):
         blank=True,
         verbose_name='备注'
     )
+
+    # 数据权限范围：控制角色能访问的数据集合
+    DATA_SCOPE_CHOICES = (
+        ('all', '全部数据'),
+        ('custom', '自定义数据（按中央关联表分配）'),
+        ('dept', '本部门数据'),
+        ('self', '仅本人数据'),
+    )
+    data_scope = models.CharField(
+        max_length=20,
+        choices=DATA_SCOPE_CHOICES,
+        default='self',
+        verbose_name='数据权限范围'
+    )
+
     # 与菜单权限的多对多关联（假设菜单模型为 Menu，权限字段为 auth_code）
     permissions = models.ManyToManyField(
         'Menu',  # 引用之前设计的 Menu 模型
@@ -343,4 +358,45 @@ class CityArea(CoreModel):
         db_table = "system_city_area"
         verbose_name = "省市区"
         verbose_name_plural = verbose_name
+
+
+class DataPermissionRule(CoreModel):
+    """
+    通用数据权限中央关联表（用户 <-> 数据资源）。
+
+    任意需要做数据隔离的业务模型，只需约定一个 scope_type（字符串标识）即可复用：
+    - scope_type: 资源类型，如 'application'、'alert'
+    - scope_id:   该资源的主键值
+    - user:       被授权访问的用户
+    新增业务模块时，无需改表结构，只要往本表写入 (scope_type, scope_id, user) 即可。
+    """
+    scope_type = models.CharField(
+        max_length=64,
+        db_index=True,
+        verbose_name='资源类型'
+    )
+    scope_id = models.BigIntegerField(
+        db_index=True,
+        verbose_name='资源ID'
+    )
+    user = models.ForeignKey(
+        'User',
+        on_delete=models.CASCADE,
+        related_name='data_permission_rules',
+        verbose_name='用户'
+    )
+    level = models.CharField(
+        max_length=20,
+        default='member',
+        verbose_name='权限级别'
+    )
+
+    class Meta:
+        db_table = 'system_data_permission_rule'
+        verbose_name = '数据权限规则'
+        verbose_name_plural = verbose_name
+        unique_together = ('scope_type', 'scope_id', 'user')
+
+    def __str__(self):
+        return f"{self.scope_type}:{self.scope_id} -> {self.user}"
 

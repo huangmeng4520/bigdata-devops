@@ -1,11 +1,5 @@
 import { requestClient } from '#/api/request';
 
-// 配置类型选项
-export const CONFIG_TYPE_OPTIONS = [
-  { label: 'CI 配置', value: 'ci' },
-  { label: 'CD 配置', value: 'cd' },
-];
-
 // 环境选项
 export const ENVIRONMENT_OPTIONS = [
   { label: '开发环境', value: 'dev' },
@@ -32,8 +26,6 @@ export namespace ApplicationPipelineApi {
     id: number;
     application: number;
     application_name?: string;
-    config_type: 'ci' | 'cd';
-    config_type_display?: string;
     environment: string;
     environment_display?: string;
     template?: number;
@@ -62,7 +54,6 @@ export namespace ApplicationPipelineApi {
     page?: number;
     page_size?: number;
     application?: number;
-    config_type?: string;
     environment?: string;
     template?: number;
     is_active?: boolean;

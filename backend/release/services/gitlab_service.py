@@ -3,9 +3,12 @@
 GitLab API 服务
 封装 GitLab Group/Subgroup/Project 的创建和管理
 """
+import logging
 import requests
 from typing import Optional, Dict, Any
 from .base import BaseService, ConfigService, DevOpsException
+
+logger = logging.getLogger(__name__)
 
 
 class GitLabService(BaseService):
@@ -59,6 +62,9 @@ class GitLabService(BaseService):
 
         try:
             response = requests.request(method, url, **kwargs)
+            
+            # Debug logging
+            logger.debug(f"GitLab API: {method} {url} -> {response.status_code}")
 
             if response.status_code == 401:
                 self._handle_error("GitLab 认证失败，请检查 Token", {"status_code": 401})
@@ -67,10 +73,14 @@ class GitLabService(BaseService):
                 self._handle_error("GitLab 权限不足", {"status_code": 403})
 
             if response.status_code >= 400:
-                error_msg = response.json().get("message", "未知错误") if response.text else "未知错误"
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get("message") or error_data.get("error", "未知错误")
+                except Exception:
+                    error_msg = response.text[:200] if response.text else "未知错误"
                 self._handle_error(f"GitLab API 请求失败: {error_msg}", {
                     "status_code": response.status_code,
-                    "response": response.text[:500]
+                    "response": response.text[:500] if response.text else ""
                 })
 
             if response.status_code == 204:
@@ -340,3 +350,104 @@ class GitLabService(BaseService):
         except DevOpsException as e:
             self._log_warning(f"GitLab 连接测试失败: {e.message}")
             return False
+
+    # ==================== 导入 GitLab 资源 ====================
+
+    def list_groups(self, page: int = 1, per_page: int = 20) -> Dict[str, Any]:
+        """
+        获取 GitLab Groups 列表
+
+        Args:
+            page: 页码
+            per_page: 每页数量
+
+        Returns:
+            Groups 列表和总数
+        """
+        result = self._request("GET", "/groups", params={
+            "page": page,
+            "per_page": per_page,
+            "all_available": True
+        })
+        return result
+
+    def list_subgroups(self, parent_id: int, page: int = 1, per_page: int = 20) -> list:
+        """
+        获取 Subgroups 列表
+
+        Args:
+            parent_id: 父 Group ID
+            page: 页码
+            per_page: 每页数量
+
+        Returns:
+            Subgroups 列表
+        """
+        result = self._request("GET", f"/groups/{parent_id}/subgroups", params={
+            "page": page,
+            "per_page": per_page
+        })
+        return result
+
+    def list_projects(self, group_id: int = None, page: int = 1, per_page: int = 20) -> list:
+        """
+        获取 GitLab Projects 列表
+
+        Args:
+            group_id: Group ID（可选，不传则获取所有有权限的项目）
+            page: 页码
+            per_page: 每页数量
+
+        Returns:
+            Projects 列表
+        """
+        params = {
+            "page": page,
+            "per_page": per_page,
+            "order_by": "last_activity_at",
+            "sort": "desc"
+        }
+        if group_id:
+            params["group_id"] = group_id
+        
+        result = self._request("GET", "/projects", params=params)
+        return result
+
+    def search_groups(self, search: str, page: int = 1, per_page: int = 20) -> list:
+        """
+        搜索 Groups
+
+        Args:
+            search: 搜索关键词
+            page: 页码
+            per_page: 每页数量
+
+        Returns:
+            匹配的 Groups 列表
+        """
+        result = self._request("GET", "/groups", params={
+            "search": search,
+            "page": page,
+            "per_page": per_page,
+            "all_available": True
+        })
+        return result
+
+    def search_projects(self, search: str, page: int = 1, per_page: int = 20) -> list:
+        """
+        搜索 Projects
+
+        Args:
+            search: 搜索关键词
+            page: 页码
+            per_page: 每页数量
+
+        Returns:
+            匹配的 Projects 列表
+        """
+        result = self._request("GET", "/projects", params={
+            "search": search,
+            "page": page,
+            "per_page": per_page
+        })
+        return result

@@ -77,6 +77,16 @@ const routes: RouteRecordRaw[] = [
         },
         component: () => import('#/views/system/dict_data/list.vue'),
       },
+      {
+        path: '/system/config',
+        name: 'SystemConfig',
+        meta: {
+          icon: 'carbon:settings',
+          title: $t('system.config.name'),
+          authority: ['system:config:query'],
+        },
+        component: () => import('#/views/system/config/list.vue'),
+      },
       // {
       //   path: '/system/tenants',
       //   name: 'SystemTenants',

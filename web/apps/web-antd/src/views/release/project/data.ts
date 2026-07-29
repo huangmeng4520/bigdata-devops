@@ -145,16 +145,16 @@ export function useColumns(
       width: 150,
     },
     {
-      field: 'module_count',
       title: '模块数',
       width: 80,
       align: 'center',
+      slots: { default: 'module_count' },
     },
     {
-      field: 'app_count',
       title: '应用数',
       width: 80,
       align: 'center',
+      slots: { default: 'app_count' },
     },
     {
       title: 'GitLab',
@@ -202,6 +202,7 @@ export function useColumns(
         name: 'CellOperation',
         options: [
           op('release:project:edit', 'edit'),
+          op('release:module:create', { code: 'create-module', text: '创建模块' }),
           op('release:project:sync-gitlab', { code: 'sync-gitlab', text: '同步GitLab' }),
           op('release:project:delete', 'delete'),
         ],

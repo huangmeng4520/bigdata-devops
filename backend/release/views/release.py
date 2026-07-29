@@ -21,25 +21,67 @@ from ..serializers import (
 )
 from ..filters import ReleaseRecordFilter, ReleaseBuildLogFilter, ApprovalRuleFilter
 from utils.custom_model_viewSet import CustomModelViewSet
+from utils.data_permission import (
+    DataPermissionMixin, user_has_scope_access, user_has_button_perm
+)
+from utils.permissions import HasMutateButtonPermission
+
+MAX_LOG_LENGTH = 200 * 1024
 
 
-class ReleaseRecordViewSet(CustomModelViewSet):
+def _get_pipeline_content(app, environment):
+    """获取应用的 Pipeline Jenkinsfile 内容"""
+    config = ApplicationPipelineConfig.objects.filter(
+        application=app, environment=environment, is_active=True
+    ).select_related('template_version').first()
+    if not config:
+        return None
+    if config.template_version and config.template_version.content:
+        return config.template_version.content
+    if config.custom_content:
+        return config.custom_content
+    return None
+
+
+class ReleaseRecordViewSet(DataPermissionMixin, CustomModelViewSet):
     """发布记录视图集"""
     queryset = ReleaseRecord.objects.select_related(
         'application', 'application__project', 'application__module'
     ).all()
     serializer_class = ReleaseRecordSerializer
     filterset_class = ReleaseRecordFilter
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasMutateButtonPermission]
+
+    # 数据权限：按所属应用→项目级联隔离
+    scope_type = 'project'
+    scope_field = 'application__project_id'
+
+    # 自定义动作（触发/取消/审批/拒绝/重试/AI分析）按按钮码校验
+    RECORD_ACTION_PERMS = {
+        'trigger': 'release:release_record:trigger',
+        'cancel': 'release:release_record:cancel',
+        'approve': 'release:release_record:approve',
+        'reject': 'release:release_record:reject',
+        'retry': 'release:release_record:retry',
+        'ai_analysis': 'release:release_record:ai_analysis',
+    }
+
+    def get_permissions(self):
+        if self.action in self.RECORD_ACTION_PERMS:
+            self.required_permission = self.RECORD_ACTION_PERMS[self.action]
+        return super().get_permissions()
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        # 非管理员只能看到自己发布的记录
-        user = self.request.user
-        if not user.is_superuser:
-            # 可以在这里添加更复杂的权限逻辑
-            pass
-        return queryset
+        return self.data_permission_filter(queryset)
+
+    def perform_update(self, serializer):
+        self.check_object_data_permission(serializer.instance)
+        serializer.save(modifier=self.request.user.username)
+
+    def perform_destroy(self, instance):
+        self.check_object_data_permission(instance)
+        super().perform_destroy(instance)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def trigger(self, request, pk=None):
@@ -52,12 +94,10 @@ class ReleaseRecordViewSet(CustomModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 更新状态
         release.status = 'building'
         release.status_message = "正在触发构建..."
         release.save(update_fields=['status', 'status_message'])
 
-        # 异步触发 Jenkins 构建
         from ..tasks import trigger_jenkins_build
         trigger_jenkins_build.delay(release.id)
 
@@ -78,17 +118,13 @@ class ReleaseRecordViewSet(CustomModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 取消 Jenkins 构建
         if release.jenkins_build_number:
             from ..services import JenkinsService
             jenkins = JenkinsService()
-
-            # 解析 Job 名称和 Folder
             job_full_name = release.jenkins_job_name
             parts = job_full_name.split('/')
             job_name = parts[-1]
             folder = '/'.join(parts[:-1]) if len(parts) > 1 else None
-
             jenkins.stop_build(
                 name=job_name,
                 build_number=release.jenkins_build_number,
@@ -170,12 +206,10 @@ class ReleaseRecordViewSet(CustomModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 更新状态
         release.status = 'building'
         release.status_message = "正在重试构建..."
         release.save(update_fields=['status', 'status_message'])
 
-        # 异步触发 Jenkins 构建
         from ..tasks import trigger_jenkins_build
         trigger_jenkins_build.delay(release.id)
 
@@ -184,13 +218,81 @@ class ReleaseRecordViewSet(CustomModelViewSet):
             "release_id": release.id
         })
 
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def ai_analysis(self, request, pk=None):
+        """AI 分析：创建对话保存日志，调用 AI 并保存回复，返回 conversation_id"""
+        from ai.models import ChatConversation, ChatMessage, AIModel
+
+        release = self.get_object()
+        if release.status != 'build_failed':
+            return Response(
+                {"error": "仅构建失败的发布记录可以分析"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        app = release.application
+        logs_qs = release.build_logs.all().order_by('create_time')
+        log_text = '\n'.join(l.log_content or '' for l in logs_qs)
+        if len(log_text) > MAX_LOG_LENGTH:
+            log_text = '...(前部省略)...\n' + log_text[-MAX_LOG_LENGTH:]
+
+        pipeline_content = _get_pipeline_content(app, release.environment)
+        project_name = app.project.name if app.project else '-'
+        module_name = app.module.name if app.module else '-'
+
+        system_parts = [
+            "你是一个 DevOps 构建失败分析专家。请分析以下构建失败原因。",
+            "",
+            f"应用：{app.name} ({app.code})",
+            f"项目：{project_name} / 模块：{module_name}",
+            f"分支：{release.branch} | 环境：{release.environment} | 版本：{release.version or '-'}",
+        ]
+        if pipeline_content:
+            system_parts.extend([
+                "",
+                "该应用的 Pipeline 配置（Jenkinsfile）：",
+                "```",
+                pipeline_content,
+                "```",
+            ])
+        system_prompt = '\n'.join(system_parts)
+
+        user_prompt = f"以下是本次构建的日志输出，请分析失败原因并给出修复建议：\n\n```\n{log_text}\n```"
+
+        full_user_msg = system_prompt + '\n\n---\n\n' + user_prompt
+
+        ai_model = AIModel.objects.filter(status=1).select_related('key').first()
+        model_name = ai_model.model if ai_model else 'deepseek-chat'
+
+        from django.utils import timezone
+        now_str = timezone.now().strftime('%m-%d %H:%M')
+        conversation = ChatConversation.objects.create(
+            title=f"构建分析: {app.name} #{release.jenkins_build_number or ''} {now_str}",
+            model=model_name,
+            model_id=ai_model if ai_model else None,
+            temperature=0.7,
+            max_tokens=2048,
+            max_contexts=10,
+        )
+
+        ChatMessage.objects.create(
+            conversation_id=conversation.id, model=model_name,
+            type='user', content=full_user_msg[:2000],
+            use_context=False,
+        )
+
+        release.conversation_id = conversation.id
+        release.save(update_fields=['conversation_id'])
+
+        return self._build_response(data={"conversation_id": conversation.id})
+
 
 class ApprovalRuleViewSet(CustomModelViewSet):
     """审批规则视图集"""
     queryset = ApprovalRule.objects.all()
     serializer_class = ApprovalRuleSerializer
     filterset_class = ApprovalRuleFilter
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasMutateButtonPermission]
 
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:
@@ -218,6 +320,18 @@ def trigger_release(request, app_id):
         return Response(
             {"error": "应用不存在"},
             status=status.HTTP_404_NOT_FOUND
+        )
+
+    # 数据权限 + 按钮权限校验
+    if not user_has_button_perm(request.user, 'release:application:release'):
+        return Response(
+            {"error": "无权限触发发布"},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    if not user_has_scope_access(request.user, 'application', application.id):
+        return Response(
+            {"error": "无权限操作该应用"},
+            status=status.HTTP_403_FORBIDDEN
         )
 
     serializer = ReleaseCreateSerializer(data=request.data)
@@ -332,6 +446,13 @@ def get_app_branches(request, app_id):
             status=status.HTTP_404_NOT_FOUND
         )
 
+    # 数据权限校验：仅可访问被分配的应用
+    if not user_has_scope_access(request.user, 'application', application.id):
+        return Response(
+            {"error": "无权限操作该应用"},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
     # 从 GitLab 获取分支列表
     from ..services import GitLabService
     try:
@@ -365,24 +486,25 @@ def get_app_environments(request, app_id):
     GET /api/admin/release/application/<app_id>/environments/
     """
     try:
-        application = Application.objects.select_related('ci_template', 'cd_template').get(pk=app_id)
+        application = Application.objects.get(pk=app_id)
     except Application.DoesNotExist:
         return Response(
             {"error": "应用不存在"},
             status=status.HTTP_404_NOT_FOUND
         )
 
-    # 检查应用是否直接关联了 CI/CD 模板
-    has_ci_template = application.ci_template_id is not None
-    has_cd_template = application.cd_template_id is not None
+    # 数据权限校验：仅可访问被分配的应用
+    if not user_has_scope_access(request.user, 'application', application.id):
+        return Response(
+            {"error": "无权限操作该应用"},
+            status=status.HTTP_403_FORBIDDEN
+        )
 
-    # 获取应用的流水线配置（针对每个环境的详细配置）
     configs = ApplicationPipelineConfig.objects.filter(
         application=application,
         is_active=True
-    ).values('environment', 'config_type', 'jenkins_job_name')
+    ).values('environment', 'jenkins_job_name')
 
-    # 获取环境策略
     strategies = {
         s.environment: s
         for s in EnvironmentStrategy.objects.filter(status=1)
@@ -395,19 +517,11 @@ def get_app_environments(request, app_id):
         config = next((c for c in configs if c['environment'] == env_code), None)
         strategy = strategies.get(env_code)
 
-        # 判断是否有 CI 配置：
-        # 1. 应用直接关联了 CI 模板，或
-        # 2. 该环境有具体的 CI 流水线配置
-        has_ci_config = has_ci_template or (config and config['config_type'] == 'ci')
-        has_cd_config = has_cd_template or (config and config['config_type'] == 'cd')
-
         environments.append({
             "code": env_code,
             "name": env_name,
-            "has_ci_config": has_ci_config,
-            "has_cd_config": has_cd_config,
+            "has_pipeline_config": config is not None,
             "requires_approval": strategy.requires_approval if strategy else False,
-            "pipeline_mode": strategy.pipeline_mode if strategy else 'integrated',
         })
 
     return Response({"code": 0, "data": environments})

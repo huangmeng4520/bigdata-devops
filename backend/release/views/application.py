@@ -7,6 +7,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from utils.custom_model_viewSet import CustomModelViewSet
+from utils.data_permission import DataPermissionMixin
+from utils.permissions import HasMutateButtonPermission
 from ..models import Application, ConfigPackage, SyncLog, PipelineTemplate
 from ..serializers import (
     ApplicationSerializer, ApplicationCreateSerializer,
@@ -22,15 +24,20 @@ from ..tasks import (
 logger = logging.getLogger(__name__)
 
 
-class ApplicationViewSet(CustomModelViewSet):
+class ApplicationViewSet(DataPermissionMixin, CustomModelViewSet):
     """应用管理"""
     queryset = Application.objects.all()
     serializer_class = ApplicationSerializer
+    permission_classes = [HasMutateButtonPermission]
     filter_backends = [DjangoFilterBackend]
     filterset_class = ApplicationFilter
     search_fields = ["name", "code"]
     ordering_fields = ["sort", "create_time"]
     enable_soft_delete = True
+
+    # 数据权限：应用归属项目，按 project 级联隔离
+    scope_type = 'project'
+    scope_field = 'project_id'
 
     action_serializers = {
         "create": ApplicationCreateSerializer,
@@ -38,19 +45,41 @@ class ApplicationViewSet(CustomModelViewSet):
     }
 
     def get_queryset(self):
-        queryset = super().get_queryset().select_related("project", "module", "ci_template", "cd_template")
+        queryset = super().get_queryset().select_related("project", "module")
         if self.enable_soft_delete:
             queryset = queryset.filter(is_deleted=False)
-        return queryset
+        return self.data_permission_filter(queryset)
 
     def perform_create(self, serializer):
-        """创建应用并自动创建相关资源"""
+        """创建应用（不自动创建 GitLab 仓库，兼容一个 Git 仓库多个应用）"""
         instance = serializer.save(creator=self.request.user.username)
-        self._create_resources(instance)
+        # 创建人自动获得该应用的数据权限（中央关联表）
+        from system.models import DataPermissionRule
+        DataPermissionRule.objects.get_or_create(
+            scope_type='project',
+            scope_id=instance.project_id,
+            user=self.request.user,
+            defaults={'creator': self.request.user.username, 'level': 'owner'},
+        )
+        try:
+            create_jenkins_resources.delay(instance.id)
+            create_harbor_resources.delay(instance.id)
+        except Exception as e:
+            logger.exception(f"应用 {instance.name} 异步任务提交失败: {e}")
+
+    def perform_update(self, serializer):
+        """更新时自动设置修改人"""
+        self.check_object_data_permission(serializer.instance)
+        serializer.save(modifier=self.request.user.username)
+
+    def perform_destroy(self, instance):
+        """删除前校验数据权限"""
+        self.check_object_data_permission(instance)
+        super().perform_destroy(instance)
 
     def _create_resources(self, app: Application):
         """
-        创建应用相关资源
+        创建应用相关资源（包含 GitLab，已废弃）
 
         1. GitLab Project (同步创建，获取 git_url)
         2. Jenkins CI/CD Jobs (异步)
@@ -82,17 +111,7 @@ class ApplicationViewSet(CustomModelViewSet):
             return
 
         # 2. 异步创建 Jenkins 和 Harbor 资源
-        try:
-            # Jenkins 异步任务
-            create_jenkins_resources.delay(app.id)
-            logger.info(f"应用 {app.name} Jenkins 资源创建任务已提交")
-
-            # Harbor 异步任务
-            create_harbor_resources.delay(app.id)
-            logger.info(f"应用 {app.name} Harbor 资源创建任务已提交")
-
-        except Exception as e:
-            logger.exception(f"应用 {app.name} 异步任务提交失败: {e}")
+        self._create_jenkins_and_harbor(app)
 
     def _create_gitlab_project(self, app: Application) -> int:
         """
@@ -163,30 +182,8 @@ class ApplicationViewSet(CustomModelViewSet):
             return None
 
     def perform_update(self, serializer):
-        """更新时自动设置修改人，并检查是否需要同步到 Jenkins"""
-        instance = serializer.instance
-        old_ci_template = instance.ci_template_id
-        old_cd_template = instance.cd_template_id
-        old_ci_variables = instance.ci_variables
-        old_cd_variables = instance.cd_variables
-
+        """更新时自动设置修改人"""
         serializer.save(modifier=self.request.user.username)
-
-        # 检查 CI/CD 配置是否变更
-        instance.refresh_from_db()
-        ci_changed = (
-            old_ci_template != instance.ci_template_id or
-            old_ci_variables != instance.ci_variables
-        )
-        cd_changed = (
-            old_cd_template != instance.cd_template_id or
-            old_cd_variables != instance.cd_variables
-        )
-
-        # 如果配置变更且有关联模板，自动同步到 Jenkins
-        if (ci_changed or cd_changed) and (instance.ci_template or instance.cd_template):
-            logger.info(f"应用 {instance.name} CI/CD 配置变更，触发 Jenkins 同步")
-            sync_application_jenkins.delay(instance.id)
 
     @action(detail=True, methods=["get"])
     def config_packages(self, request, pk=None):
@@ -236,7 +233,7 @@ class ApplicationViewSet(CustomModelViewSet):
                 results["gitlab"] = {"skipped": True, "reason": "exists or no_subgroup"}
 
         if resource_type in ["all", "jenkins"]:
-            if not app.jenkins_ci_job or app.jenkins_sync_status == 3 or force:
+            if app.jenkins_sync_status != 2 or force:
                 if app.git_url:
                     task = create_jenkins_resources.delay(app.id, force)
                     results["jenkins"] = {"task_id": task.id}
@@ -296,10 +293,10 @@ class ApplicationViewSet(CustomModelViewSet):
                 "message": "应用没有 Git 仓库地址，无法创建 Jenkins Job"
             }, status=400)
 
-        if app.jenkins_ci_job and app.jenkins_sync_status != 3 and not force:
+        if app.jenkins_sync_status == 2 and not force:
             return Response({
                 "code": 1,
-                "message": "Jenkins Job 已存在，如需重新创建请使用 force=true"
+                "message": "Jenkins 资源已同步，如需重新创建请使用 force=true"
             }, status=400)
 
         task = create_jenkins_resources.delay(app.id, force)
@@ -347,8 +344,6 @@ class ApplicationViewSet(CustomModelViewSet):
                     "sync_message": app.gitlab_sync_message,
                 },
                 "jenkins": {
-                    "ci_job": app.jenkins_ci_job,
-                    "cd_job": app.jenkins_cd_job,
                     "status": app.get_jenkins_sync_status_display(),
                     "sync_status": app.jenkins_sync_status,
                     "sync_time": app.jenkins_sync_time,
@@ -367,20 +362,22 @@ class ApplicationViewSet(CustomModelViewSet):
     @action(detail=True, methods=["post"])
     def sync_to_jenkins(self, request, pk=None):
         """
-        手动同步 CI/CD 配置到 Jenkins
-
-        将关联的 CI/CD 模板同步到 Jenkins Job
+        手动同步 Pipeline 配置到 Jenkins
         """
+        from ..models import ApplicationPipelineConfig
+
         app = self.get_object()
 
-        # 检查是否有关联模板
-        if not app.ci_template and not app.cd_template:
+        has_configs = ApplicationPipelineConfig.objects.filter(
+            application=app, is_deleted=False
+        ).exists()
+
+        if not has_configs:
             return Response({
                 "code": 1,
-                "message": "请先关联 CI 或 CD 模板"
+                "message": "请先配置 Pipeline 模板"
             }, status=400)
 
-        # 触发异步同步任务
         task = sync_application_jenkins.delay(app.id)
 
         return Response({
@@ -401,29 +398,32 @@ class ApplicationViewSet(CustomModelViewSet):
                 "sync_status_display": app.get_jenkins_sync_status_display(),
                 "sync_time": app.jenkins_sync_time,
                 "sync_message": app.jenkins_sync_message,
-                "ci_template": app.ci_template.name if app.ci_template else None,
-                "cd_template": app.cd_template.name if app.cd_template else None,
             }
         })
 
     @action(detail=True, methods=["get"])
     def preview_jenkinsfile(self, request, pk=None):
         """预览生成的 Jenkinsfile"""
-        from ..services import JenkinsService
+        from ..models import ApplicationPipelineConfig
 
         app = self.get_object()
-        template_type = request.query_params.get("type", "ci")  # ci 或 cd
+        env_id = request.query_params.get("environment")
 
-        template = app.ci_template if template_type == "ci" else app.cd_template
-        variables = app.ci_variables if template_type == "ci" else app.cd_variables
+        configs = ApplicationPipelineConfig.objects.filter(
+            application=app, is_deleted=False
+        )
+        if env_id:
+            configs = configs.filter(environment_id=env_id)
 
-        if not template:
+        config = configs.first()
+        if not config or not config.template:
             return Response({
                 "code": 1,
-                "message": f"未关联 {template_type.upper()} 模板"
+                "message": "未关联 Pipeline 模板"
             }, status=400)
 
-        # 获取最新版本
+        template = config.template
+        variables = config.variables or {}
         latest_version = template.latest_version
         if not latest_version:
             return Response({
@@ -431,18 +431,14 @@ class ApplicationViewSet(CustomModelViewSet):
                 "message": "模板没有可用版本"
             }, status=400)
 
-        # 合并变量
         content = latest_version.content
         template_variables = latest_version.variables or {}
-
-        # 先替换模板默认变量
         if template_variables and isinstance(template_variables, dict):
             for var in template_variables.get('variables', []):
                 var_name = var.get('name')
                 if var_name and var_name not in variables:
                     variables[var_name] = var.get('default', '')
 
-        # 替换用户变量
         for key, value in variables.items():
             content = content.replace(f'${{{key}}}', str(value))
 
@@ -453,5 +449,6 @@ class ApplicationViewSet(CustomModelViewSet):
                 "template_name": template.name,
                 "template_version": latest_version.version,
                 "variables": variables,
+                "environment": config.environment.name if config.environment else None,
             }
         })

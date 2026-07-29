@@ -1,8 +1,9 @@
 <script lang="ts" setup>
 import { ref, watch, computed, onUnmounted } from 'vue';
+import { useRouter } from 'vue-router';
 import { useVbenModal } from '@vben/common-ui';
-import { Badge, Button, Divider, Spin, Tag, Tooltip } from 'ant-design-vue';
-import { getBuildLogs, getReleaseDetail, RELEASE_STATUS_MAP } from '#/api/release/record';
+import { Badge, Button, Divider, message, Spin, Tag, Tooltip } from 'ant-design-vue';
+import { getBuildLogs, getReleaseDetail, createAIAnalysis, RELEASE_STATUS_MAP } from '#/api/release/record';
 
 // 发布记录
 const releaseId = ref<number | null>(null);
@@ -33,6 +34,20 @@ function handleConfirm() {
 const [Modal, modalApi] = useVbenModal({
   onConfirm: handleConfirm,
 });
+
+const router = useRouter();
+
+async function handleAIAnalyze() {
+  if (!releaseId.value) return;
+  try {
+    const res = await createAIAnalysis(releaseId.value);
+    const conversationId = res.conversation_id ?? res;
+    modalApi.close();
+    router.push({ path: '/ai/chat', query: { conversation_id: conversationId, auto_send: '1' } });
+  } catch (err: any) {
+    message.error(err?.response?.data?.error || err?.message || '创建 AI 分析失败');
+  }
+}
 
 // 对外暴露的方法
 function open(id: number) {
@@ -371,6 +386,14 @@ defineExpose({ open });
           </Tag>
         </div>
         <div class="toolbar-right">
+          <Button
+            v-if="releaseInfo?.status === 'build_failed'"
+            type="link"
+            size="small"
+            @click="handleAIAnalyze"
+          >
+            AI 分析
+          </Button>
           <Tooltip title="在新窗口打开 Jenkins 构建">
             <Button
               type="link"

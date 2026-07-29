@@ -7,6 +7,7 @@ from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from utils.custom_model_viewSet import CustomModelViewSet
+from utils.permissions import HasMutateButtonPermission
 from ..models import PipelineTemplate, PipelineTemplateVersion
 from ..serializers import (
     PipelineTemplateSerializer, PipelineTemplateCreateSerializer,
@@ -20,6 +21,7 @@ class PipelineTemplateViewSet(CustomModelViewSet):
     """流水线模板管理"""
     queryset = PipelineTemplate.objects.all()
     serializer_class = PipelineTemplateSerializer
+    permission_classes = [HasMutateButtonPermission]
     filter_backends = [DjangoFilterBackend]
     filterset_class = PipelineTemplateFilter
     search_fields = ["name", "code", "language", "framework"]
@@ -128,7 +130,6 @@ class PipelineTemplateViewSet(CustomModelViewSet):
         new_template = PipelineTemplate.objects.create(
             name=new_name,
             code=new_code,
-            template_type=template.template_type,
             language=template.language,
             language_version=template.language_version,
             framework=template.framework,
@@ -166,7 +167,6 @@ class PipelineTemplateViewSet(CustomModelViewSet):
             'template': {
                 'name': template.name,
                 'code': template.code,
-                'template_type': template.template_type,
                 'language': template.language,
                 'language_version': template.language_version,
                 'framework': template.framework,
@@ -199,7 +199,6 @@ class PipelineTemplateViewSet(CustomModelViewSet):
         template = PipelineTemplate.objects.create(
             name=template_data.get('name'),
             code=code,
-            template_type=template_data.get('template_type'),
             language=template_data.get('language'),
             language_version=template_data.get('language_version', ''),
             framework=template_data.get('framework', ''),
@@ -229,6 +228,7 @@ class PipelineTemplateVersionViewSet(CustomModelViewSet):
     """模板版本管理"""
     queryset = PipelineTemplateVersion.objects.all()
     serializer_class = PipelineTemplateVersionSerializer
+    permission_classes = [HasMutateButtonPermission]
     filter_backends = [DjangoFilterBackend]
     filterset_class = PipelineTemplateVersionFilter
     search_fields = ["version", "change_log"]

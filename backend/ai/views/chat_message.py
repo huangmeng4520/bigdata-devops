@@ -7,12 +7,42 @@ from rest_framework.response import Response
 
 from ai.llm.enums import LLMProvider
 from ai.llm.factory import get_adapter
-from ai.models import ChatMessage
+from ai.models import ChatConversation, ChatMessage
 from backend import settings
 from ai.choices import MessageType
 from utils.serializers import CustomModelSerializer
 from utils.custom_model_viewSet import CustomModelViewSet
 from django_filters import rest_framework as filters
+
+PLATFORM_TO_PROVIDER = {
+    'OpenAI': LLMProvider.OPENAI,
+    'AzureOpenAI': LLMProvider.OPENAI,
+    'Ollama': LLMProvider.OPENAI,
+    'DeepSeek': LLMProvider.DEEPSEEK,
+    'TongYi': LLMProvider.TONGYI,
+    'SiliconFlow': LLMProvider.OPENAI,
+    'ZhiPu': LLMProvider.OPENAI,
+}
+
+
+def _get_conversation_config(conversation_id):
+    try:
+        conversation = ChatConversation.objects.select_related(
+            'model_id__key'
+        ).get(pk=conversation_id)
+    except ChatConversation.DoesNotExist:
+        return None, None, None, None
+
+    if not conversation.model_id:
+        return None, None, None, None
+
+    ai_model = conversation.model_id
+    api_key_obj = ai_model.key
+    provider = PLATFORM_TO_PROVIDER.get(api_key_obj.platform, LLMProvider.OPENAI)
+    api_key = api_key_obj.api_key
+    base_url = api_key_obj.url or None
+    model = ai_model.model
+    return provider, api_key, base_url, model
 
 
 class ChatMessageSerializer(CustomModelSerializer):
@@ -52,82 +82,82 @@ class ChatMessageViewSet(CustomModelViewSet):
         """
         content = request.data.get('content')
         conversation_id = request.data.get('conversation_id')
-        platform = request.data.get('platform', 'deepseek')
+        resume = request.data.get('resume', False)
+        if isinstance(conversation_id, dict):
+            conversation_id = conversation_id.get('id')
 
-        # 获取平台配置
-        if platform == 'tongyi':
-            model = 'qwen-plus'
-            api_key = settings.DASHSCOPE_API_KEY
-            provider = LLMProvider.TONGYI
-        else:
-            # 默认使用 DeepSeek
-            model = 'deepseek-chat'
-            api_key = settings.DEEPSEEK_API_KEY
-            provider = LLMProvider.DEEPSEEK
-
-        # 获取当前用户
         user_id = request.user.id
 
+        from ai.models import AIModel
+
+        provider, api_key, base_url, model = _get_conversation_config(conversation_id)
+
+        if provider is None:
+            ai_model = AIModel.objects.filter(status=1).select_related('key').first()
+            if ai_model and ai_model.key and ai_model.key.api_key:
+                provider = PLATFORM_TO_PROVIDER.get(ai_model.key.platform, LLMProvider.OPENAI)
+                api_key = ai_model.key.api_key
+                base_url = ai_model.key.url or None
+                model = ai_model.model
+            else:
+                platform = request.data.get('platform', 'deepseek')
+                if platform == 'tongyi':
+                    model = 'qwen-plus'
+                    api_key = settings.DASHSCOPE_API_KEY
+                    provider = LLMProvider.TONGYI
+                else:
+                    model = 'deepseek-chat'
+                    api_key = settings.DEEPSEEK_API_KEY
+                    provider = LLMProvider.DEEPSEEK
+
         try:
-            # 获取或创建对话
             conversation = ChatMessage.objects.filter(conversation_id=conversation_id).order_by('id')
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 添加用户消息
-        ChatMessage.objects.create(
-            conversation_id=conversation_id,
-            user_id=user_id,
-            role_id=None,
-            model=model,
-            model_id=None,
-            type=MessageType.USER,
-            reply_id=None,
-            content=content,
-            use_context=True,
-            segment_ids=None,
-        )
-        # 构建上下文
+        if not resume:
+            ChatMessage.objects.create(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                role_id=None,
+                model=model,
+                model_id=None,
+                type=MessageType.USER,
+                reply_id=None,
+                content=content,
+                use_context=True,
+                segment_ids=None,
+            )
+
         context = [("system", "You are a helpful assistant")]
         history = ChatMessage.objects.filter(conversation_id=conversation_id).order_by('id')
 
         for msg in history:
             context.append((msg.type, msg.content))
 
-        # 获取LLM适配器
-        llm = get_adapter(provider, api_key=api_key, model=model)
+        llm = get_adapter(provider, api_key=api_key, model=model, base_url=base_url)
 
-        # 创建流式响应
-
-        # 8. 同步生成器（包装异步LLM流，核心修复点）
         def generate():
             ai_reply = ""
             loop = None
             try:
-                # 创建新的事件循环（避免复用主线程循环）
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
 
-                # 异步生成器包装函数
                 async def async_stream():
-                    # 调用LLM的异步流式接口（假设 llm.stream_chat 是 async_generator）
                     async for chunk in llm.stream_chat(context):
                         yield chunk
 
-                # 将异步生成器转换为同步迭代
                 async_gen = async_stream()
                 while True:
                     try:
-                        # 逐个获取异步chunk
                         chunk = loop.run_until_complete(async_gen.__anext__())
                     except StopAsyncIteration:
-                        break  # 流结束，退出循环
+                        break
                     except Exception as e:
-                        # 捕获LLM流异常，返回错误信息
                         yield f"data: 错误：{str(e)}\n\n"
                         break
 
-                    # 提取chunk内容（适配不同LLM的返回格式）
                     if hasattr(chunk, 'content'):
                         chunk_content = chunk.content.strip()
                     elif isinstance(chunk, dict) and 'content' in chunk:
@@ -135,17 +165,13 @@ class ChatMessageViewSet(CustomModelViewSet):
                     else:
                         chunk_content = str(chunk).strip()
 
-                    # 只返回非空内容
                     if chunk_content:
                         ai_reply += chunk_content
-                        # 遵循SSE格式：data: 内容\n\n（必须以\n\n结尾）
                         yield f"data: {chunk_content}\n\n"
 
             finally:
-                # 关闭事件循环（避免资源泄漏）
                 if loop:
                     loop.close()
-            # 保存AI回复
             if ai_reply.strip():
                 ChatMessage.objects.create(
                     conversation_id=conversation_id,

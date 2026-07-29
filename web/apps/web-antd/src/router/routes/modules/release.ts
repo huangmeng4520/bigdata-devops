@@ -51,6 +51,15 @@ const routes: RouteRecordRaw[] = [
         component: () => import('#/views/release/pipelineTemplate/index.vue'),
       },
       {
+        path: '/release/code-repository',
+        name: 'ReleaseCodeRepository',
+        meta: {
+          icon: 'mdi:source-repository',
+          title: '代码仓库',
+        },
+        component: () => import('#/views/release/codeRepository/index.vue'),
+      },
+      {
         path: '/release/environment-strategy',
         name: 'ReleaseEnvironmentStrategy',
         meta: {

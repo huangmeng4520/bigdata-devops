@@ -22,20 +22,17 @@ export namespace ReleaseApplicationApi {
     description?: string;
     app_type: string;
     app_type_display?: string;
+    // 代码仓库关联
+    code_repository?: number;
+    code_repository_name?: string;
+    code_repository_git_url?: string;
+    code_subpath?: string;
+    // 兼容旧字段
     git_url?: string;
     gitlab_project_id?: number;
-    jenkins_ci_job?: string;
-    jenkins_cd_job?: string;
     harbor_project?: string;
     build_branch: string;
     dockerfile_path: string;
-    // CI/CD 模板关联
-    ci_template?: number;
-    ci_template_name?: string;
-    cd_template?: number;
-    cd_template_name?: string;
-    ci_variables?: Record<string, any>;
-    cd_variables?: Record<string, any>;
     // Jenkins 同步状态
     jenkins_sync_status: 0 | 1 | 2 | 3;
     jenkins_sync_status_display?: string;
@@ -68,6 +65,7 @@ export namespace ReleaseApplicationApi {
     code?: string;
     project?: number;
     module?: number;
+    code_repository?: number;
     app_type?: string;
     status?: number;
   }
@@ -77,8 +75,6 @@ export namespace ReleaseApplicationApi {
     sync_status_display: string;
     sync_time?: string;
     sync_message?: string;
-    ci_template?: string;
-    cd_template?: string;
   }
 
   export interface ResourceStatus {
@@ -91,8 +87,6 @@ export namespace ReleaseApplicationApi {
       sync_message?: string;
     };
     jenkins: {
-      ci_job?: string;
-      cd_job?: string;
       status: string;
       sync_status: number;
       sync_time?: string;
@@ -112,6 +106,7 @@ export namespace ReleaseApplicationApi {
     template_name: string;
     template_version: string;
     variables: Record<string, any>;
+    environment?: string;
   }
 }
 
@@ -225,9 +220,9 @@ async function getJenkinsSyncStatus(id: number) {
 /**
  * 预览 Jenkinsfile
  */
-async function previewJenkinsfile(id: number, type: 'ci' | 'cd' = 'ci') {
+async function previewJenkinsfile(id: number, environment?: string) {
   return requestClient.get<{ data: ReleaseApplicationApi.JenkinsfilePreview }>(`/release/application/${id}/preview_jenkinsfile/`, {
-    params: { type },
+    params: environment ? { environment } : {},
   });
 }
 

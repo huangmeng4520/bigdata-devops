@@ -1,8 +1,7 @@
 <script lang="ts" setup>
-import {
-  type OnActionClickParams,
-  TableAction,
-  type VxeTableGridOptions,
+import type {
+  OnActionClickParams,
+  VxeTableGridOptions,
 } from '#/adapter/vxe-table';
 import type { EnvironmentStrategyApi } from '#/api/release';
 
@@ -11,12 +10,13 @@ import { Plus } from '@vben/icons';
 
 import { message } from 'ant-design-vue';
 
-import { useVbenVxeGrid } from '#/adapter/vxe-table';
+import { TableAction, useVbenVxeGrid } from '#/adapter/vxe-table';
 import {
   deleteStrategy,
   getStrategyList,
   setDefaultStrategy,
 } from '#/api/release';
+import { hasPermission } from '#/utils/permission';
 
 import { useColumns, useGridFormSchema } from './data';
 import Form from './modules/form.vue';
@@ -77,18 +77,21 @@ function onDelete(row: EnvironmentStrategyApi.Strategy) {
 /**
  * 操作按钮
  */
-function onActionClick({ row, code }: OnActionClickParams<EnvironmentStrategyApi.Strategy>) {
+function onActionClick({
+  row,
+  code,
+}: OnActionClickParams<EnvironmentStrategyApi.Strategy>) {
   switch (code) {
-    case 'edit': {
-      onEdit(row);
-      break;
-    }
     case 'default': {
       onSetDefault(row);
       break;
     }
     case 'delete': {
       onDelete(row);
+      break;
+    }
+    case 'edit': {
+      onEdit(row);
       break;
     }
   }
@@ -139,16 +142,19 @@ function getActionButtons(row: EnvironmentStrategyApi.Strategy) {
     {
       code: 'edit',
       text: '编辑',
+      auth: ['release:environment_strategy:edit'],
     },
     {
       code: 'default',
       text: '设为默认',
       disabled: row.is_default,
+      auth: ['release:environment_strategy:edit'],
     },
     {
       code: 'delete',
       text: '删除',
       danger: true,
+      auth: ['release:environment_strategy:delete'],
     },
   ];
 }
@@ -158,16 +164,17 @@ function getActionButtons(row: EnvironmentStrategyApi.Strategy) {
   <Page auto-content-height>
     <Grid table-title="环境策略管理">
       <template #toolbar-tools>
-        <a-button type="primary" @click="onCreate">
+        <a-button
+          v-if="hasPermission('release:environment_strategy:create')"
+          type="primary"
+          @click="onCreate"
+        >
           <Plus class="mr-1" />
           创建策略
         </a-button>
       </template>
       <template #action="{ row }">
-        <TableAction
-          :actions="getActionButtons(row)"
-          @click="onActionClick"
-        />
+        <TableAction :actions="getActionButtons(row)" @click="onActionClick" />
       </template>
     </Grid>
     <FormModal />

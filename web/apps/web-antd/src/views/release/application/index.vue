@@ -9,34 +9,42 @@ import type { ReleaseApplicationApi } from '#/api/release';
 
 import { Page, useVbenModal } from '@vben/common-ui';
 
-import { ref } from 'vue';
+import { nextTick, onMounted, ref } from 'vue';
 
-import { message, Tag, Tooltip } from 'ant-design-vue';
+import { useRoute } from 'vue-router';
+
+import { Button, Dropdown, Menu, MenuItem, message, Popconfirm, Tag, Tooltip } from 'ant-design-vue';
 
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import {
   deleteApplication,
   getApplicationList,
+  getModuleList,
   getProjectList,
-  syncGitlab,
   syncHarbor,
   syncJenkins,
-  syncResources,
   syncToJenkins,
 } from '#/api/release';
 import { $t } from '#/locales';
+import { hasPermission } from '#/utils/permission';
 
 import { useColumns, useGridFormSchema } from './data';
 import Form from './modules/form.vue';
 import ReleaseModal from './modules/ReleaseModal.vue';
+import PipelineConfigModal from './modules/PipelineConfigModal.vue';
 
 const [FormModal, formModalApi] = useVbenModal({
   connectedComponent: Form,
-  destroyOnClose: false,
+  destroyOnClose: true,
 });
 
 const [ReleaseModalComp, releaseModalApi] = useVbenModal({
   connectedComponent: ReleaseModal,
+  destroyOnClose: true,
+});
+
+const [PipelineConfigModalComp, pipelineConfigModalApi] = useVbenModal({
+  connectedComponent: PipelineConfigModal,
   destroyOnClose: true,
 });
 
@@ -47,8 +55,9 @@ const moduleOptions = ref<{ label: string; value: number }[]>([]);
 
 // 加载项目列表
 async function loadProjects() {
-  const result = await getProjectList({ page_size: 1000 });
-  projectOptions.value = (result.items || []).map((item) => ({
+  const result = await getProjectList({ page: 1, page_size: 1000 });
+  const list = Array.isArray(result) ? result : (result?.items || []);
+  projectOptions.value = list.map((item: any) => ({
     label: item.name,
     value: item.id,
   }));
@@ -56,6 +65,49 @@ async function loadProjects() {
 
 // 初始化加载项目列表
 loadProjects();
+
+// 加载模块列表
+async function loadModules(projectId?: number) {
+  const params: Record<string, any> = { page: 1, page_size: 1000, status: 1 };
+  if (projectId) params.project = projectId;
+  const result = await getModuleList(params);
+  const list = Array.isArray(result) ? result : (result?.items || []);
+  moduleOptions.value = list.map((item: any) => ({
+    label: item.name,
+    value: item.id,
+  }));
+}
+
+// 初始加载所有模块
+loadModules();
+
+const route = useRoute();
+
+onMounted(async () => {
+  const projectId = route.query.project as string | undefined;
+  const moduleId = route.query.module as string | undefined;
+  const codeRepoId = route.query.code_repository as string | undefined;
+  const autoCreate = route.query.create as string | undefined;
+
+  await nextTick();
+
+  const formValues: Record<string, number> = {};
+  if (projectId) formValues.project = Number(projectId);
+  if (moduleId) formValues.module = Number(moduleId);
+  if (codeRepoId) formValues.code_repository = Number(codeRepoId);
+  if (Object.keys(formValues).length > 0) {
+    gridApi.formApi.setValues(formValues);
+    gridApi.query();
+  }
+
+  if (autoCreate === '1') {
+    onCreate(
+      projectId ? Number(projectId) : undefined,
+      moduleId ? Number(moduleId) : undefined,
+      codeRepoId ? Number(codeRepoId) : undefined,
+    );
+  }
+});
 
 /**
  * 编辑应用
@@ -67,8 +119,12 @@ function onEdit(row: ReleaseApplicationApi.Application) {
 /**
  * 创建新应用
  */
-function onCreate() {
-  formModalApi.setData(null).open();
+function onCreate(projectId?: number, moduleId?: number, codeRepoId?: number) {
+  const data: Record<string, number> = {};
+  if (projectId) data.project = projectId;
+  if (moduleId) data.module = moduleId;
+  if (codeRepoId) data.code_repository = codeRepoId;
+  formModalApi.setData(Object.keys(data).length > 0 ? data : null).open();
 }
 
 /**
@@ -94,51 +150,7 @@ function onDelete(row: ReleaseApplicationApi.Application) {
 }
 
 /**
- * 同步资源
- */
-function onSyncResources(row: ReleaseApplicationApi.Application) {
-  const hideLoading = message.loading({
-    content: `正在同步 ${row.name} 的资源...`,
-    duration: 0,
-    key: 'action_process_msg',
-  });
-  syncResources(row.id, 'all', false)
-    .then(() => {
-      message.success({
-        content: `${row.name} 的资源同步任务已提交`,
-        key: 'action_process_msg',
-      });
-      refreshGrid();
-    })
-    .catch(() => {
-      hideLoading();
-    });
-}
-
-/**
- * 同步 GitLab
- */
-function onSyncGitlab(row: ReleaseApplicationApi.Application) {
-  const hideLoading = message.loading({
-    content: `正在同步 ${row.name} 的 GitLab 资源...`,
-    duration: 0,
-    key: 'action_process_msg',
-  });
-  syncGitlab(row.id, false)
-    .then(() => {
-      message.success({
-        content: `${row.name} 的 GitLab 同步任务已提交`,
-        key: 'action_process_msg',
-      });
-      refreshGrid();
-    })
-    .catch(() => {
-      hideLoading();
-    });
-}
-
-/**
- * 同步 Jenkins
+ * 同步 Jenkins 资源（创建 Job）
  */
 function onSyncJenkinsResource(row: ReleaseApplicationApi.Application) {
   const hideLoading = message.loading({
@@ -185,13 +197,8 @@ function onSyncHarbor(row: ReleaseApplicationApi.Application) {
  * 同步到 Jenkins
  */
 function onSyncJenkins(row: ReleaseApplicationApi.Application) {
-  if (!row.ci_template && !row.cd_template) {
-    message.warning('请先在应用编辑中关联 CI 或 CD 模板');
-    return;
-  }
-
   const hideLoading = message.loading({
-    content: `正在同步 ${row.name} 的 CI/CD 配置到 Jenkins...`,
+    content: `正在同步 ${row.name} 的 Pipeline 配置到 Jenkins...`,
     duration: 0,
     key: 'action_process_msg',
   });
@@ -225,14 +232,6 @@ function onActionClick({
       onEdit(row);
       break;
     }
-    case 'sync-resources': {
-      onSyncResources(row);
-      break;
-    }
-    case 'sync-gitlab': {
-      onSyncGitlab(row);
-      break;
-    }
     case 'sync-jenkins-resource': {
       onSyncJenkinsResource(row);
       break;
@@ -243,6 +242,10 @@ function onActionClick({
     }
     case 'sync-jenkins': {
       onSyncJenkins(row);
+      break;
+    }
+    case 'pipeline-config': {
+      onPipelineConfig(row);
       break;
     }
     case 'release': {
@@ -256,11 +259,14 @@ function onActionClick({
  * 发布应用
  */
 function onRelease(row: ReleaseApplicationApi.Application) {
-  if (!row.ci_template) {
-    message.warning('请先关联 CI 模板');
-    return;
-  }
   releaseModalApi.setData(row).open();
+}
+
+/**
+ * 流水线配置
+ */
+function onPipelineConfig(row: ReleaseApplicationApi.Application) {
+  pipelineConfigModalApi.setData(row).open();
 }
 
 const [Grid, gridApi] = useVbenVxeGrid({
@@ -327,21 +333,6 @@ const SYNC_STATUS_TEXT: Record<number, string> = {
   3: '同步失败',
 };
 
-// GitLab 同步状态颜色
-const GITLAB_SYNC_STATUS_COLORS: Record<number, string> = {
-  0: 'default',
-  1: 'processing',
-  2: 'success',
-  3: 'error',
-};
-
-const GITLAB_SYNC_STATUS_TEXT: Record<number, string> = {
-  0: '待同步',
-  1: '同步中',
-  2: '已同步',
-  3: '同步失败',
-};
-
 // Harbor 同步状态颜色
 const HARBOR_SYNC_STATUS_COLORS: Record<number, string> = {
   0: 'default',
@@ -362,6 +353,7 @@ const HARBOR_SYNC_STATUS_TEXT: Record<number, string> = {
   <Page auto-content-height>
     <FormModal @success="refreshGrid" />
     <ReleaseModalComp @success="refreshGrid" />
+    <PipelineConfigModalComp @success="refreshGrid" />
     <Grid table-title="应用列表">
       <template #toolbar-tools>
         <TableAction
@@ -375,31 +367,6 @@ const HARBOR_SYNC_STATUS_TEXT: Record<number, string> = {
             },
           ]"
         />
-      </template>
-
-      <!-- CI/CD 模板状态 -->
-      <template #cicd_templates="{ row }">
-        <div style="display: flex; gap: 4px; justify-content: center; flex-wrap: wrap;">
-          <Tooltip :title="row.ci_template_name ? `CI: ${row.ci_template_name}` : '未配置 CI 模板'">
-            <Tag :color="row.ci_template_name ? 'blue' : 'default'">
-              CI
-            </Tag>
-          </Tooltip>
-          <Tooltip :title="row.cd_template_name ? `CD: ${row.cd_template_name}` : '未配置 CD 模板'">
-            <Tag :color="row.cd_template_name ? 'green' : 'default'">
-              CD
-            </Tag>
-          </Tooltip>
-        </div>
-      </template>
-
-      <!-- GitLab 同步状态 -->
-      <template #gitlab_sync="{ row }">
-        <Tooltip :title="row.gitlab_sync_message || GITLAB_SYNC_STATUS_TEXT[row.gitlab_sync_status]">
-          <Tag :color="GITLAB_SYNC_STATUS_COLORS[row.gitlab_sync_status]">
-            {{ GITLAB_SYNC_STATUS_TEXT[row.gitlab_sync_status] }}
-          </Tag>
-        </Tooltip>
       </template>
 
       <!-- Jenkins 同步状态 -->
@@ -418,6 +385,46 @@ const HARBOR_SYNC_STATUS_TEXT: Record<number, string> = {
             {{ HARBOR_SYNC_STATUS_TEXT[row.harbor_sync_status] }}
           </Tag>
         </Tooltip>
+      </template>
+
+      <!-- 操作列 -->
+      <template #operation="{ row }">
+        <div class="flex gap-1 flex-nowrap">
+          <Button
+            v-if="hasPermission('release:application:release')"
+            type="primary" size="small"
+            @click="onActionClick({ code: 'release', row })"
+          >发布</Button>
+          <Button
+            v-if="hasPermission('release:application:update')"
+            size="small"
+            @click="onActionClick({ code: 'edit', row })"
+          >编辑</Button>
+          <Button
+            v-if="hasPermission('release:application:sync-jenkins')"
+            type="primary" size="small"
+            @click="onActionClick({ code: 'pipeline-config', row })"
+          >流水线配置</Button>
+          <Dropdown v-if="hasPermission('release:application:sync-jenkins') || hasPermission('release:application:sync-jenkins-resource') || hasPermission('release:application:sync-harbor')">
+            <Button size="small">更多 ···</Button>
+            <template #overlay>
+              <Menu>
+                <MenuItem v-if="hasPermission('release:application:sync-jenkins')" key="sync-jenkins" @click="onActionClick({ code: 'sync-jenkins', row })">同步 Jenkins</MenuItem>
+                <MenuItem v-if="hasPermission('release:application:sync-jenkins-resource')" key="sync-jenkins-resource" @click="onActionClick({ code: 'sync-jenkins-resource', row })">创建 Job</MenuItem>
+                <MenuItem v-if="hasPermission('release:application:sync-harbor')" key="sync-harbor" @click="onActionClick({ code: 'sync-harbor', row })">Harbor</MenuItem>
+              </Menu>
+            </template>
+          </Dropdown>
+          <Popconfirm
+            :title="$t('ui.actionTitle.delete', ['应用'])"
+            @confirm="onActionClick({ code: 'delete', row })"
+          >
+            <template #description>
+              <div class="truncate">{{ $t('ui.actionMessage.deleteConfirm', [row.name]) }}</div>
+            </template>
+            <Button v-if="hasPermission('release:application:delete')" danger size="small">删除</Button>
+          </Popconfirm>
+        </div>
       </template>
     </Grid>
   </Page>

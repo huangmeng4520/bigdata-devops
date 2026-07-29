@@ -52,7 +52,7 @@ class ConfigPackageService(BaseService):
         Returns:
             配置包信息
         """
-        from ..models import Application, Template
+        from ..models import Application
 
         try:
             app = Application.objects.select_related("project", "module").get(pk=app_id)
@@ -145,8 +145,6 @@ class ConfigPackageService(BaseService):
             },
             "devops": {
                 "gitlab_project_id": app.gitlab_project_id,
-                "jenkins_ci_job": app.jenkins_ci_job,
-                "jenkins_cd_job": app.jenkins_cd_job,
                 "harbor_project": app.harbor_project,
             },
             "generated_at": datetime.now().isoformat()
@@ -155,42 +153,7 @@ class ConfigPackageService(BaseService):
         return config
 
     def _get_template_files(self, app_type: str, temp_dir: str) -> list:
-        """
-        获取模板文件
-
-        Args:
-            app_type: 应用类型
-            temp_dir: 临时目录
-
-        Returns:
-            模板文件列表
-        """
-        from ..models import Template
-
-        files = []
-        template_types = ["jenkinsfile", "dockerfile"]
-
-        for template_type in template_types:
-            templates = Template.objects.filter(
-                template_type=template_type,
-                app_type=app_type,
-                status=1,
-                is_deleted=False
-            )
-
-            for template in templates:
-                filename = f"{template.code}.{template_type}"
-                if template_type == "jenkinsfile":
-                    filename = "Jenkinsfile" if template.code == "default" else f"Jenkinsfile.{template.code}"
-                elif template_type == "dockerfile":
-                    filename = "Dockerfile" if template.code == "default" else f"Dockerfile.{template.code}"
-
-                filepath = os.path.join(temp_dir, filename)
-                with open(filepath, "w", encoding="utf-8") as f:
-                    f.write(template.content)
-                files.append(filepath)
-
-        return files
+        return []
 
     def _generate_readme(self, app, config: dict, filepath: str):
         """生成 README 文件"""
@@ -212,8 +175,6 @@ class ConfigPackageService(BaseService):
 ## DevOps 信息
 
 - **GitLab Project ID**: {app.gitlab_project_id or '未创建'}
-- **Jenkins CI Job**: {app.jenkins_ci_job or '未创建'}
-- **Jenkins CD Job**: {app.jenkins_cd_job or '未创建'}
 - **Harbor Project**: {app.harbor_project or '未创建'}
 
 ## 文件说明

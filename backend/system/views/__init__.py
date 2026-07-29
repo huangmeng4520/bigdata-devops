@@ -10,6 +10,7 @@ __all__ = [
     'ConfigViewSet',
     'LoginLogViewSet',
     'CityAreaViewSet',
+    'DataPermissionRuleViewSet',
 ]
 
 from system.views.dict_data import DictDataViewSet
@@ -23,3 +24,4 @@ from system.views.login_log import LoginLogViewSet
 from system.views.config import ConfigViewSet
 from system.views.user import *
 from system.views.city_area import CityAreaViewSet
+from system.views.data_permission import DataPermissionRuleViewSet

@@ -130,6 +130,7 @@ from ai.views.ai_api_key import AIApiKeyViewSet
 - 新模块需补充单元测试和接口文档。
 - 前后端接口字段需保持一致，类型安全。
 - 权限点、菜单、路由需同步配置。
+- 按钮权限码必须遵循《[权限码命名规范](./permission_code_convention.md)》，`model_name` 段使用下划线（如 `code_repository`、`release_record`），禁止连字符或简写；提交前可运行 `python manage.py check_permission_codes` 自检。
 - 代码提交前请自查并走团队代码评审流程。
 
 ---

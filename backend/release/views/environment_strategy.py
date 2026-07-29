@@ -7,6 +7,7 @@ from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from utils.custom_model_viewSet import CustomModelViewSet
+from utils.permissions import HasMutateButtonPermission
 from ..models import EnvironmentStrategy
 from ..serializers import EnvironmentStrategySerializer, EnvironmentStrategyCreateSerializer
 from ..filters import EnvironmentStrategyFilter
@@ -16,6 +17,7 @@ class EnvironmentStrategyViewSet(CustomModelViewSet):
     """环境策略管理"""
     queryset = EnvironmentStrategy.objects.all()
     serializer_class = EnvironmentStrategySerializer
+    permission_classes = [HasMutateButtonPermission]
     filter_backends = [DjangoFilterBackend]
     filterset_class = EnvironmentStrategyFilter
     search_fields = ["name", "code", "description"]

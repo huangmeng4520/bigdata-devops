@@ -20,6 +20,8 @@ import {
   parseStages,
   extractStageScript,
   updateStageSteps,
+  extractEnvironment,
+  updateEnvironment,
   validateJenkinsfile,
 } from '../utils/jenkinsfileParser';
 
@@ -78,6 +80,10 @@ const availableStages = ref<{ name: string; content: string }[]>([]);
 const currentStageName = ref('');
 const currentStageScript = ref('');
 const originalJenkinsfile = ref('');
+
+// Environment 编辑
+const envEditorVisible = ref(false);
+const currentEnvContent = ref('');
 
 // 版本对比
 const compareVisible = ref(false);
@@ -353,6 +359,60 @@ async function handleSaveStage() {
   }
 }
 
+// 编辑 Environment
+async function handleEditEnvironment(version: PipelineTemplateApi.TemplateVersion) {
+  try {
+    const detail = await getVersionDetail(version.id);
+    const content = detail?.content || '';
+
+    const envContent = extractEnvironment(content);
+    if (!envContent) {
+      message.warning('未检测到 environment 块');
+      return;
+    }
+
+    originalJenkinsfile.value = content;
+    currentEnvContent.value = envContent;
+    envEditorVisible.value = true;
+  } catch (error: any) {
+    message.error('加载版本详情失败');
+  }
+}
+
+// 保存 Environment 编辑
+async function handleSaveEnvironment() {
+  if (!originalJenkinsfile.value || !currentTemplate.value?.id) return;
+
+  try {
+    const updatedJenkinsfile = updateEnvironment(
+      originalJenkinsfile.value,
+      currentEnvContent.value
+    );
+
+    const validation = validateJenkinsfile(updatedJenkinsfile);
+    if (!validation.valid) {
+      message.error('Jenkinsfile 格式错误：' + validation.error);
+      return;
+    }
+
+    const nextVersion = generateNextVersion();
+
+    await createTemplateVersion(currentTemplate.value.id, {
+      version: nextVersion,
+      content: updatedJenkinsfile,
+      change_log: '编辑 Environment',
+      is_latest: true,
+    });
+
+    message.success(`已创建新版本 ${nextVersion}`);
+    envEditorVisible.value = false;
+    await loadVersions();
+    emit('success');
+  } catch (error: any) {
+    message.error(error?.message || '保存失败');
+  }
+}
+
 // 版本对比
 async function openCompare() {
   if (versionList.value.length < 2) {
@@ -624,6 +684,9 @@ function getStatusColor(version: PipelineTemplateApi.TemplateVersion): string {
                   <a-button type="primary" size="small" ghost @click="handleEditStage(version)">
                     编辑Stage
                   </a-button>
+                  <a-button type="primary" size="small" ghost @click="handleEditEnvironment(version)">
+                    编辑Environment
+                  </a-button>
                   <a-button type="primary" size="small" @click="handleAutoVersion(version)">
                     迭代版本
                   </a-button>
@@ -765,6 +828,32 @@ function getStatusColor(version: PipelineTemplateApi.TemplateVersion): string {
         </div>
         <textarea
           v-model="currentStageScript"
+          class="code-editor"
+          style="min-height: 300px"
+          spellcheck="false"
+        />
+      </div>
+    </AModal>
+
+    <!-- Environment 编辑弹窗 -->
+    <AModal
+      v-model:open="envEditorVisible"
+      title="编辑 Environment"
+      :width="800"
+      @ok="handleSaveEnvironment"
+    >
+      <Alert type="info" class="mb-4" banner>
+        <template #message>
+          编辑后将自动创建新版本（版本号自动递增），原版本不受影响
+        </template>
+      </Alert>
+
+      <div class="editor-container">
+        <div class="editor-toolbar">
+          <span class="editor-title">Environment 变量</span>
+        </div>
+        <textarea
+          v-model="currentEnvContent"
           class="code-editor"
           style="min-height: 300px"
           spellcheck="false"

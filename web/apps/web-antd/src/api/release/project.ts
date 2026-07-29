@@ -7,6 +7,7 @@ export namespace ReleaseProjectApi {
     code: string;
     description?: string;
     gitlab_group_id?: number;
+    gitlab_group_url?: string;
     status: 0 | 1;
     sort: number;
     module_count?: number;
@@ -116,6 +117,34 @@ async function getProjectSyncLogs(id: number) {
   return requestClient.get(`/release/project/${id}/sync_logs/`);
 }
 
+/**
+ * 列出 GitLab Groups（用于导入）
+ */
+async function listGitLabGroups(params?: { search?: string; page?: number; per_page?: number }) {
+  return requestClient.get('/release/project/list_gitlab_groups/', { params });
+}
+
+/**
+ * 批量从 GitLab 导入 Groups
+ */
+async function importGitLabGroups(gitlabGroupIds: number[]) {
+  return requestClient.post('/release/project/import_gitlab_groups/', { gitlab_group_ids: gitlabGroupIds });
+}
+
+/**
+ * 从 GitLab 导入单个 Group
+ */
+async function importGitLabGroup(gitlabGroupId: number) {
+  return requestClient.post('/release/project/import_gitlab_group/', { gitlab_group_id: gitlabGroupId });
+}
+
+/**
+ * 列出 GitLab Projects（用于导入）
+ */
+async function listGitLabProjects(params?: { group_id?: number; search?: string; page?: number; per_page?: number }) {
+  return requestClient.get('/release/project/list_gitlab_projects/', { params });
+}
+
 export {
   createProject,
   deleteProject,
@@ -127,4 +156,8 @@ export {
   getProjectTree,
   syncProjectGitlab,
   updateProject,
+  listGitLabGroups,
+  importGitLabGroup,
+  importGitLabGroups,
+  listGitLabProjects,
 };

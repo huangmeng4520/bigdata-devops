@@ -12,6 +12,12 @@ import { $t } from '#/locales';
 import { format_datetime } from '#/utils/date';
 import { op } from '#/utils/permission';
 
+export interface ModuleColumnOptions {
+  onActionClick?: OnActionClickFn<ReleaseModuleApi.Module>;
+  goToAppList?: (row: ReleaseModuleApi.Module) => void;
+  goToRepoList?: (row: ReleaseModuleApi.Module) => void;
+}
+
 /**
  * 获取编辑表单的字段配置
  */
@@ -23,7 +29,7 @@ export function useSchema(): VbenFormSchema[] {
       label: '所属项目',
       rules: z.number({ required_error: '请选择所属项目' }),
       componentProps: {
-        api: () => getProjectList({ page_size: 1000, status: 1 }),
+        api: () => getProjectList({ page: 1, page_size: 1000, status: 1 }),
         resultField: 'items',
         labelField: 'name',
         valueField: 'id',
@@ -154,8 +160,9 @@ export function useGridFormSchema(
  * @param onActionClick 表格操作按钮点击事件
  */
 export function useColumns(
-  onActionClick?: OnActionClickFn<ReleaseModuleApi.Module>,
+  options?: ModuleColumnOptions,
 ): VxeTableGridOptions<ReleaseModuleApi.Module>['columns'] {
+  const { onActionClick, goToAppList, goToRepoList } = options || {};
   return [
     {
       type: 'seq',
@@ -178,14 +185,22 @@ export function useColumns(
       width: 150,
     },
     {
+      field: 'repo_count',
+      title: '仓库数',
+      width: 80,
+      align: 'center',
+      slots: { default: 'repo_count' },
+    },
+    {
       field: 'app_count',
       title: '应用数',
       width: 80,
       align: 'center',
+      slots: { default: 'app_count' },
     },
     {
       title: 'GitLab',
-      width: 100,
+      width: 140,
       align: 'center',
       slots: { default: 'gitlab_status' },
     },
@@ -220,19 +235,7 @@ export function useColumns(
     },
     {
       align: 'center',
-      cellRender: {
-        attrs: {
-          nameField: 'name',
-          nameTitle: '模块',
-          onClick: onActionClick,
-        },
-        name: 'CellOperation',
-        options: [
-          op('release:module:edit', 'edit'),
-          op('release:module:sync-gitlab', { code: 'sync-gitlab', text: '同步GitLab' }),
-          op('release:module:delete', 'delete'),
-        ],
-      },
+      slots: { default: 'operation' },
       field: 'operation',
       fixed: 'right',
       headerAlign: 'center',

@@ -102,13 +102,12 @@ async function loadData() {
     const envsRes = await getAppEnvironments(application.value.id).catch(() => []);
     environments.value = Array.isArray(envsRes) ? envsRes : [];
 
-    // 如果环境列表为空，添加默认环境选项
     if (environments.value.length === 0) {
       environments.value = [
-        { code: 'dev', name: '开发环境', has_ci_config: false, has_cd_config: false, requires_approval: false, pipeline_mode: 'integrated' },
-        { code: 'test', name: '测试环境', has_ci_config: false, has_cd_config: false, requires_approval: false, pipeline_mode: 'integrated' },
-        { code: 'staging', name: '准生产环境', has_ci_config: false, has_cd_config: false, requires_approval: true, pipeline_mode: 'integrated' },
-        { code: 'production', name: '生产环境', has_ci_config: false, has_cd_config: false, requires_approval: true, pipeline_mode: 'integrated' },
+        { code: 'dev', name: '开发环境', has_pipeline_config: false, requires_approval: false },
+        { code: 'test', name: '测试环境', has_pipeline_config: false, requires_approval: false },
+        { code: 'staging', name: '准生产环境', has_pipeline_config: false, requires_approval: true },
+        { code: 'production', name: '生产环境', has_pipeline_config: false, requires_approval: true },
       ];
     }
 
@@ -301,10 +300,10 @@ function resetForm() {
               v-for="env in environments"
               :key="env.code"
               :value="env.code"
-              :disabled="!env.has_ci_config"
+              :disabled="!env.has_pipeline_config"
             >
               {{ env.name }}
-              <Tag v-if="!env.has_ci_config" color="error" style="margin-left: 4px; font-size: 10px;">
+              <Tag v-if="!env.has_pipeline_config" color="error" style="margin-left: 4px; font-size: 10px;">
                 未配置
               </Tag>
               <Tag v-if="env.requires_approval" color="warning" style="margin-left: 4px; font-size: 10px;">
@@ -312,8 +311,8 @@ function resetForm() {
               </Tag>
             </SelectOption>
           </Select>
-          <div v-if="environments.length > 0 && !environments.some(e => e.has_ci_config)" class="form-tip" style="color: #ff4d4f;">
-            当前应用未配置 CI 流水线，请先在应用编辑中关联 CI 模板
+          <div v-if="environments.length > 0 && !environments.some(e => e.has_pipeline_config)" class="form-tip" style="color: #ff4d4f;">
+            当前应用未配置流水线，请先在应用编辑中配置 Pipeline 模板
           </div>
         </div>
 
@@ -396,12 +395,7 @@ function resetForm() {
         <div v-if="selectedEnv" class="env-tips">
           <a-alert type="info" show-icon>
             <template #message>
-              <template v-if="selectedEnv.pipeline_mode === 'integrated'">
-                CI/CD 合并模式：构建完成后将自动部署到目标环境
-              </template>
-              <template v-else>
-                CI/CD 分离模式：CI 构建完成后，需要手动导出配置到政务网 Jenkins 执行 CD
-              </template>
+              构建完成后将部署到目标环境
             </template>
           </a-alert>
         </div>

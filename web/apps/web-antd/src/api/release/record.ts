@@ -34,6 +34,11 @@ export function getBuildLogs(releaseId: number) {
   return requestClient.get(`/release/release-records/${releaseId}/logs/`);
 }
 
+/** AI 分析构建失败 - 创建对话并返回 conversation_id */
+export function createAIAnalysis(releaseId: number) {
+  return requestClient.post(`/release/release-records/${releaseId}/ai_analysis/`);
+}
+
 /** 审批通过 */
 export function approveRelease(releaseId: number, data: { comment?: string }) {
   return requestClient.post(`/release/release-records/${releaseId}/approve/`, data);

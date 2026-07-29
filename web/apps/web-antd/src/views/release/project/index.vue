@@ -11,17 +11,29 @@ import { Page, useVbenModal } from '@vben/common-ui';
 
 import { message, Tag } from 'ant-design-vue';
 
+import { useRouter } from 'vue-router';
+
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import { deleteProject, getProjectList, syncProjectGitlab } from '#/api/release';
 import { $t } from '#/locales';
 
 import { useColumns, useGridFormSchema } from './data';
 import Form from './modules/form.vue';
+import ImportGitlabModal from './modules/importGitlabModal.vue';
 
 const [FormModal, formModalApi] = useVbenModal({
   connectedComponent: Form,
-  destroyOnClose: false,
+  destroyOnClose: true,
 });
+
+const [ImportModal, importModalApi] = useVbenModal({
+  connectedComponent: ImportGitlabModal,
+  destroyOnClose: true,
+});
+
+function openImportModal() {
+  importModalApi.open();
+}
 
 /**
  * 编辑项目
@@ -84,6 +96,16 @@ function onSyncGitlab(row: ReleaseProjectApi.Project) {
 /**
  * 表格操作按钮的回调函数
  */
+const router = useRouter();
+
+function goToModuleList(row: ReleaseProjectApi.Project) {
+  router.push({ path: '/release/module', query: { project: String(row.id) } });
+}
+
+function goToAppList(row: ReleaseProjectApi.Project) {
+  router.push({ path: '/release/application', query: { project: String(row.id) } });
+}
+
 function onActionClick({
   code,
   row,
@@ -95,6 +117,10 @@ function onActionClick({
     }
     case 'edit': {
       onEdit(row);
+      break;
+    }
+    case 'create-module': {
+      router.push({ path: '/release/module', query: { project: String(row.id), create: '1' } });
       break;
     }
     case 'sync-gitlab': {
@@ -157,6 +183,7 @@ function refreshGrid() {
 <template>
   <Page auto-content-height>
     <FormModal @success="refreshGrid" />
+    <ImportModal @success="refreshGrid" />
     <Grid table-title="项目列表">
       <template #toolbar-tools>
         <TableAction
@@ -168,11 +195,32 @@ function refreshGrid() {
               auth: ['release:project:create'],
               onClick: onCreate,
             },
+            {
+              label: '从 GitLab 导入',
+              icon: ACTION_ICON.IMPORT,
+              auth: ['release:project:import'],
+              onClick: openImportModal,
+            },
           ]"
         />
       </template>
+      <template #module_count="{ row }">
+        <a class="text-primary cursor-pointer" @click="goToModuleList(row)">
+          {{ row.module_count ?? 0 }}
+        </a>
+      </template>
+      <template #app_count="{ row }">
+        <a class="text-primary cursor-pointer" @click="goToAppList(row)">
+          {{ row.app_count ?? 0 }}
+        </a>
+      </template>
       <template #gitlab_status="{ row }">
-        <Tag :color="row.gitlab_group_id ? 'success' : 'default'">
+        <template v-if="row.gitlab_group_id && row.gitlab_group_url">
+          <a :href="row.gitlab_group_url" target="_blank" rel="noopener noreferrer">
+            已创建
+          </a>
+        </template>
+        <Tag v-else :color="row.gitlab_group_id ? 'success' : 'default'">
           {{ row.gitlab_group_id ? '已创建' : '未创建' }}
         </Tag>
       </template>

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from django.contrib import admin
-from .models import Project, Module, Application, ConfigPackage, SyncLog, Template
+from .models import Project, Module, Application, ConfigPackage, SyncLog
 
 
 @admin.register(Project)
@@ -43,9 +43,4 @@ class SyncLogAdmin(admin.ModelAdmin):
     ordering = ['-create_time']
 
 
-@admin.register(Template)
-class TemplateAdmin(admin.ModelAdmin):
-    list_display = ['id', 'name', 'code', 'template_type', 'app_type', 'status', 'create_time']
-    list_filter = ['status', 'template_type', 'app_type']
-    search_fields = ['name', 'code']
-    ordering = ['-create_time']
+

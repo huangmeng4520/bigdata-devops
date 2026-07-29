@@ -23,21 +23,22 @@ export async function getMessages(conversationId: number) {
   return await res.json();
 }
 
-// 你原有的fetchAIStream方法保留
 export interface FetchAIStreamParams {
   content: string;
   platform: string;
   conversation_id?: null | number;
+  resume?: boolean;
 }
 
 export async function fetchAIStream({
   content,
   platform,
   conversation_id,
+  resume,
 }: FetchAIStreamParams) {
   const res = await fetchWithAuth('ai/chat_message/stream/', {
     method: 'POST',
-    body: JSON.stringify({ content, platform, conversation_id }),
+    body: JSON.stringify({ content, platform, conversation_id, resume }),
   });
   if (!res.body) throw new Error('No stream body');
   const reader = res.body.getReader();

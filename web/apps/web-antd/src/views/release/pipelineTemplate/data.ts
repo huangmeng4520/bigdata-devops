@@ -5,7 +5,7 @@ import { h } from 'vue';
 
 import { Tag } from 'ant-design-vue';
 
-import { TEMPLATE_TYPE_OPTIONS, LANGUAGE_OPTIONS } from '#/api/release';
+import { LANGUAGE_OPTIONS } from '#/api/release';
 
 import { z } from '#/adapter/form';
 import type { VbenFormSchema } from '#/adapter/form';
@@ -26,21 +26,6 @@ export function useColumns() {
       type: 'seq',
       title: '序号',
       width: 60,
-    },
-    {
-      field: 'template_type',
-      title: '类型',
-      width: 100,
-      slots: {
-        default: ({ row }: { row: PipelineTemplateApi.Template }) => {
-          const typeMap: Record<string, { color: string; text: string }> = {
-            ci: { color: 'blue', text: 'CI' },
-            cd: { color: 'green', text: 'CD' },
-          };
-          const item = typeMap[row.template_type] || { color: 'default', text: row.template_type };
-          return h(Tag, { color: item.color }, () => item.text);
-        },
-      },
     },
     {
       field: 'name',
@@ -107,11 +92,11 @@ export function useColumns() {
         },
         name: 'CellOperation',
         options: [
-          { code: 'edit', text: '编辑' },
-          { code: 'versions', text: '版本管理' },
-          { code: 'copy', text: '复制' },
-          { code: 'export', text: '导出' },
-          { code: 'delete', text: '删除' },
+          op('release:pipeline_template:edit', { code: 'edit', text: '编辑' }),
+          op('release:pipeline_template:query', { code: 'versions', text: '版本管理' }),
+          op('release:pipeline_template:create', { code: 'copy', text: '复制' }),
+          op('release:pipeline_template:query', { code: 'export', text: '导出' }),
+          op('release:pipeline_template:delete', { code: 'delete', text: '删除' }),
         ],
       },
       field: 'operation',
@@ -132,16 +117,6 @@ export function useGridFormSchema(): VbenFormSchema[] {
     {
       component: 'Select',
       componentProps: {
-        options: [{ label: '全部', value: '' }, ...TEMPLATE_TYPE_OPTIONS],
-        placeholder: '请选择类型',
-        allowClear: true,
-      },
-      fieldName: 'template_type',
-      label: '类型',
-    },
-    {
-      component: 'Select',
-      componentProps: {
         options: [{ label: '全部', value: '' }, ...LANGUAGE_OPTIONS],
         placeholder: '请选择语言',
         allowClear: true,
@@ -158,13 +133,6 @@ export function useGridFormSchema(): VbenFormSchema[] {
       label: '名称',
     },
   ];
-}
-
-/**
- * 模板类型选项
- */
-export function getTemplateTypeOptions() {
-  return TEMPLATE_TYPE_OPTIONS;
 }
 
 /**
@@ -191,13 +159,6 @@ export function useSchema(isEdit: boolean = false): VbenFormSchema[] {
       label: '模板编码',
       rules: z.string().min(1, '请输入模板编码'),
       componentProps: { placeholder: '如: ci-java-springboot-maven' },
-    },
-    {
-      component: 'Select',
-      fieldName: 'template_type',
-      label: '模板类型',
-      rules: z.string({ required_error: '请选择模板类型' }),
-      componentProps: { options: TEMPLATE_TYPE_OPTIONS },
     },
     {
       component: 'Select',
@@ -259,8 +220,14 @@ export function useSchema(isEdit: boolean = false): VbenFormSchema[] {
       },
       {
         component: 'Textarea',
+        fieldName: 'environment',
+        label: '环境变量 (environment)',
+        componentProps: { rows: 6, class: 'font-mono', placeholder: 'DOCKER_REGISTRY = "harbor.example.com"\nGIT_REPO = \'${GIT_REPO}\'\nIMAGE_BASE = "${DOCKER_REGISTRY}/${params.PROJECT}-${params.MODULE}/${params.APP}"' },
+      },
+      {
+        component: 'Textarea',
         fieldName: 'content',
-        label: 'Jenkinsfile',
+        label: 'Jenkinsfile (不含 environment)',
         componentProps: { rows: 12, class: 'font-mono' },
       },
       {

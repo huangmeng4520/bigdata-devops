@@ -1,11 +1,5 @@
 import { requestClient } from '#/api/request';
 
-// 模板类型选项
-export const TEMPLATE_TYPE_OPTIONS = [
-  { label: 'CI 模板', value: 'ci' },
-  { label: 'CD 模板', value: 'cd' },
-];
-
 // 语言选项
 export const LANGUAGE_OPTIONS = [
   { label: 'Java', value: 'java' },
@@ -37,8 +31,6 @@ export namespace PipelineTemplateApi {
     id: number;
     name: string;
     code: string;
-    template_type: 'ci' | 'cd';
-    template_type_display?: string;
     language: string;
     language_version?: string;
     framework?: string;
@@ -60,7 +52,6 @@ export namespace PipelineTemplateApi {
     page_size?: number;
     name?: string;
     code?: string;
-    template_type?: string;
     language?: string;
     framework?: string;
     is_official?: boolean;

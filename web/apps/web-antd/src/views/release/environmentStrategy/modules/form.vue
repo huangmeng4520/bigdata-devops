@@ -12,7 +12,7 @@ import {
   getStrategyDetail,
   updateStrategy,
 } from '#/api/release';
-import { getEnvironmentOptions, getPipelineModeOptions } from '../data';
+import { getEnvironmentOptions } from '../data';
 
 const emit = defineEmits(['success']);
 
@@ -30,9 +30,6 @@ const [Modal, modalApi] = useVbenModal({
           name: '',
           code: '',
           environment: 'test',
-          pipeline_mode: 'integrated',
-          ci_jenkins: '',
-          cd_jenkins: '',
           requires_approval: false,
           auto_deploy: false,
           description: '',
@@ -48,9 +45,6 @@ const formData = ref<Partial<EnvironmentStrategyApi.Strategy>>({
   name: '',
   code: '',
   environment: 'test',
-  pipeline_mode: 'integrated',
-  ci_jenkins: '',
-  cd_jenkins: '',
   requires_approval: false,
   auto_deploy: false,
   description: '',
@@ -90,7 +84,6 @@ async function handleSubmit() {
 }
 
 const environmentOptions = getEnvironmentOptions();
-const pipelineModeOptions = getPipelineModeOptions();
 </script>
 
 <template>
@@ -130,26 +123,6 @@ const pipelineModeOptions = getPipelineModeOptions();
           :options="environmentOptions"
           placeholder="请选择环境"
         />
-      </a-form-item>
-
-      <a-form-item
-        label="流水线模式"
-        name="pipeline_mode"
-        :rules="[{ required: true, message: '请选择流水线模式' }]"
-      >
-        <a-select
-          v-model:value="formData.pipeline_mode"
-          :options="pipelineModeOptions"
-          placeholder="请选择流水线模式"
-        />
-      </a-form-item>
-
-      <a-form-item label="CI Jenkins" name="ci_jenkins">
-        <a-input v-model:value="formData.ci_jenkins" placeholder="CI Jenkins 标识" />
-      </a-form-item>
-
-      <a-form-item label="CD Jenkins" name="cd_jenkins">
-        <a-input v-model:value="formData.cd_jenkins" placeholder="CD Jenkins 标识（政务网）" />
       </a-form-item>
 
       <a-form-item label="需要审批" name="requires_approval">

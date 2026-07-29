@@ -6,6 +6,7 @@
     python manage.py setup_application_permission
 """
 from django.core.management.base import BaseCommand
+from django.db import IntegrityError
 from system.models import Menu, MenuMeta
 
 
@@ -47,23 +48,30 @@ class Command(BaseCommand):
                     'sort': btn['sort'],
                 }
             )
-            btn_menu, created = Menu.objects.get_or_create(
-                name=btn['name'],
-                pid=app_menu,
-                defaults={
-                    'status': 1,
-                    'type': 'button',
-                    'path': '',
-                    'component': '',
-                    'auth_code': btn['auth_code'],
-                    'meta': btn_meta,
-                    'sort': btn['sort']
-                }
-            )
-            if created:
-                self.stdout.write(self.style.SUCCESS(f'创建按钮权限: {btn["title"]} ({btn["auth_code"]})'))
-            else:
-                self.stdout.write(f'按钮权限已存在: {btn["title"]}')
+            try:
+                btn_menu, created = Menu.objects.get_or_create(
+                    name=btn['name'],
+                    pid=app_menu,
+                    defaults={
+                        'status': 1,
+                        'type': 'button',
+                        'path': '',
+                        'component': '',
+                        'auth_code': btn['auth_code'],
+                        'meta': btn_meta,
+                        'sort': btn['sort']
+                    }
+                )
+                if created:
+                    self.stdout.write(self.style.SUCCESS(f'创建按钮权限: {btn["title"]} ({btn["auth_code"]})'))
+                else:
+                    self.stdout.write(f'按钮权限已存在: {btn["title"]}')
+            except IntegrityError:
+                btn_menu = Menu.objects.filter(name=btn['name'], pid=app_menu).first()
+                if btn_menu:
+                    self.stdout.write(f'按钮权限已存在: {btn["title"]}')
+                else:
+                    self.stdout.write(self.style.WARNING(f'无法创建按钮权限: {btn["title"]}'))
 
         self.stdout.write(self.style.SUCCESS('按钮权限配置完成！'))
         self.stdout.write(self.style.WARNING('请在角色管理中分配相应权限后生效'))

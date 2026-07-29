@@ -12,6 +12,9 @@ class Project(CoreModel):
     code = models.CharField(max_length=32, unique=True, verbose_name="项目编码")
     description = models.CharField(max_length=256, null=True, blank=True, verbose_name="项目描述")
     gitlab_group_id = models.IntegerField(null=True, blank=True, verbose_name="GitLab Group ID")
+    gitlab_sync_status = models.CharField(max_length=20, null=True, blank=True, verbose_name="GitLab 同步状态")
+    gitlab_sync_message = models.TextField(null=True, blank=True, verbose_name="GitLab 同步消息")
+    gitlab_synced_at = models.DateTimeField(null=True, blank=True, verbose_name="GitLab 最后同步时间")
     status = models.IntegerField(
         choices=CommonStatus.choices,
         default=CommonStatus.ENABLED,
@@ -39,6 +42,9 @@ class Module(CoreModel):
     code = models.CharField(max_length=32, verbose_name="模块编码")
     description = models.CharField(max_length=256, null=True, blank=True, verbose_name="模块描述")
     gitlab_subgroup_id = models.IntegerField(null=True, blank=True, verbose_name="GitLab Subgroup ID")
+    gitlab_sync_status = models.CharField(max_length=20, null=True, blank=True, verbose_name="GitLab 同步状态")
+    gitlab_sync_message = models.TextField(null=True, blank=True, verbose_name="GitLab 同步消息")
+    gitlab_synced_at = models.DateTimeField(null=True, blank=True, verbose_name="GitLab 最后同步时间")
     status = models.IntegerField(
         choices=CommonStatus.choices,
         default=CommonStatus.ENABLED,
@@ -57,6 +63,60 @@ class Module(CoreModel):
 
     def __str__(self):
         return f"{self.project.name}/{self.name}"
+
+
+class CodeRepository(models.Model):
+    """代码仓库"""
+
+    TYPE_CHOICES = [
+        ('gitlab', 'GitLab'),
+        ('github', 'GitHub'),
+        ('gitee', 'Gitee'),
+    ]
+
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE,
+        null=True, blank=True,
+        related_name="code_repositories", verbose_name="所属项目"
+    )
+    module = models.ForeignKey(
+        'Module', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="code_repositories", verbose_name="所属模块"
+    )
+    name = models.CharField(max_length=64, verbose_name="仓库名称")
+    code = models.CharField(max_length=32, verbose_name="仓库编码")
+    repository_type = models.CharField(max_length=16, choices=TYPE_CHOICES, default='gitlab', verbose_name="仓库类型")
+    gitlab_project_id = models.IntegerField(null=True, blank=True, verbose_name="GitLab Project ID")
+    git_url = models.CharField(max_length=256, null=True, blank=True, verbose_name="Git SSH 地址")
+    git_http_url = models.CharField(max_length=256, null=True, blank=True, verbose_name="Git HTTP 地址")
+    default_branch = models.CharField(max_length=64, default='main', verbose_name="默认分支")
+    status = models.IntegerField(
+        choices=CommonStatus.choices,
+        default=CommonStatus.ENABLED,
+        verbose_name="状态"
+    )
+    description = models.CharField(max_length=256, null=True, blank=True, verbose_name="仓库描述")
+    creator = models.CharField(max_length=64, null=True, blank=True, verbose_name="创建人")
+    modifier = models.CharField(max_length=64, null=True, blank=True, verbose_name="修改人")
+    create_time = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
+    update_time = models.DateTimeField(auto_now=True, verbose_name="修改时间")
+    is_deleted = models.BooleanField(default=False, verbose_name="是否删除")
+
+    class Meta:
+        db_table = "release_code_repository"
+        verbose_name = "代码仓库"
+        verbose_name_plural = verbose_name
+        ordering = ["-create_time"]
+        constraints = [
+            models.UniqueConstraint(fields=['project', 'code'], name='uk_repo_project_code'),
+            models.UniqueConstraint(fields=['gitlab_project_id'], name='uk_repo_gitlab_id',
+                                   condition=models.Q(gitlab_project_id__isnull=False)),
+        ]
+
+    def __str__(self):
+        if self.project:
+            return f"{self.project.name}/{self.name}"
+        return self.name
 
 
 class Application(CoreModel):
@@ -97,32 +157,28 @@ class Application(CoreModel):
     )
     module = models.ForeignKey(
         Module, on_delete=models.CASCADE,
+        null=True, blank=True,
         related_name="applications", verbose_name="所属模块"
     )
     name = models.CharField(max_length=64, verbose_name="应用名称")
     code = models.CharField(max_length=32, verbose_name="应用编码")
     description = models.CharField(max_length=256, null=True, blank=True, verbose_name="应用描述")
     app_type = models.CharField(max_length=16, choices=APP_TYPE_CHOICES, verbose_name="应用类型")
+    # 代码仓库关联
+    code_repository = models.ForeignKey(
+        CodeRepository, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='applications', verbose_name="代码仓库"
+    )
+    code_subpath = models.CharField(max_length=128, null=True, blank=True, verbose_name="代码子目录",
+                                   help_text="仓库内的子目录，用于多模块项目构建")
+    build_command = models.CharField(max_length=256, null=True, blank=True, verbose_name="编译命令",
+                                     help_text="如：mvn clean package 或 npm run build")
+    # 兼容旧字段
     git_url = models.CharField(max_length=256, null=True, blank=True, verbose_name="Git仓库地址")
     gitlab_project_id = models.IntegerField(null=True, blank=True, verbose_name="GitLab Project ID")
-    jenkins_ci_job = models.CharField(max_length=128, null=True, blank=True, verbose_name="Jenkins CI任务")
-    jenkins_cd_job = models.CharField(max_length=128, null=True, blank=True, verbose_name="Jenkins CD任务")
     harbor_project = models.CharField(max_length=64, null=True, blank=True, verbose_name="Harbor项目")
     build_branch = models.CharField(max_length=64, default="main", verbose_name="构建分支")
     dockerfile_path = models.CharField(max_length=128, default="./Dockerfile", verbose_name="Dockerfile路径")
-    # CI/CD 模板关联
-    ci_template = models.ForeignKey(
-        'PipelineTemplate', on_delete=models.SET_NULL,
-        null=True, blank=True, related_name='ci_applications',
-        verbose_name="CI 流水线模板"
-    )
-    cd_template = models.ForeignKey(
-        'PipelineTemplate', on_delete=models.SET_NULL,
-        null=True, blank=True, related_name='cd_applications',
-        verbose_name="CD 流水线模板"
-    )
-    ci_variables = models.JSONField(default=dict, blank=True, verbose_name="CI 变量配置")
-    cd_variables = models.JSONField(default=dict, blank=True, verbose_name="CD 变量配置")
     # Jenkins 同步状态
     jenkins_sync_status = models.IntegerField(
         choices=JENKINS_SYNC_STATUS_CHOICES,
@@ -160,7 +216,16 @@ class Application(CoreModel):
         verbose_name_plural = verbose_name
         ordering = ["-sort", "-create_time"]
         constraints = [
-            models.UniqueConstraint(fields=['module', 'code'], name='uk_module_code')
+            models.UniqueConstraint(
+                fields=['project', 'module', 'code'], 
+                name='uk_project_module_code',
+                condition=models.Q(module__isnull=False)
+            ),
+            models.UniqueConstraint(
+                fields=['project', 'code'],
+                name='uk_project_code_when_no_module',
+                condition=models.Q(module__isnull=True)
+            ),
         ]
 
     def __str__(self):
@@ -245,50 +310,14 @@ class SyncLog(CoreModel):
         ordering = ["-create_time"]
 
 
-class Template(CoreModel):
-    """发布模板（旧版，保留兼容）"""
-    TEMPLATE_TYPE_CHOICES = [
-        ("jenkinsfile", "Jenkinsfile"),
-        ("dockerfile", "Dockerfile"),
-        ("docker-compose", "Docker Compose"),
-    ]
-
-    name = models.CharField(max_length=64, verbose_name="模板名称")
-    code = models.CharField(max_length=32, unique=True, verbose_name="模板编码")
-    template_type = models.CharField(max_length=16, choices=TEMPLATE_TYPE_CHOICES, verbose_name="模板类型")
-    app_type = models.CharField(max_length=16, null=True, blank=True, verbose_name="适用应用类型")
-    content = models.TextField(verbose_name="模板内容")
-    description = models.CharField(max_length=256, null=True, blank=True, verbose_name="模板描述")
-    status = models.IntegerField(
-        choices=CommonStatus.choices,
-        default=CommonStatus.ENABLED,
-        verbose_name="状态"
-    )
-
-    class Meta:
-        db_table = "release_template"
-        verbose_name = "发布模板"
-        verbose_name_plural = verbose_name
-        ordering = ["-create_time"]
-
-    def __str__(self):
-        return self.name
-
-
 # ============================================================
-# CI/CD 模板系统相关模型
+# 流水线模板系统相关模型
 # ============================================================
 
 class PipelineTemplate(CoreModel):
     """流水线模板"""
-    TEMPLATE_TYPE_CHOICES = [
-        ('ci', 'CI 模板'),
-        ('cd', 'CD 模板'),
-    ]
-
     name = models.CharField(max_length=128, verbose_name="模板名称")
     code = models.CharField(max_length=64, unique=True, verbose_name="模板编码")
-    template_type = models.CharField(max_length=20, choices=TEMPLATE_TYPE_CHOICES, verbose_name="模板类型")
     language = models.CharField(max_length=32, verbose_name="编程语言")
     language_version = models.CharField(max_length=32, blank=True, null=True, verbose_name="语言版本")
     description = models.TextField(blank=True, null=True, verbose_name="描述")
@@ -307,7 +336,7 @@ class PipelineTemplate(CoreModel):
         ordering = ["-create_time"]
 
     def __str__(self):
-        return f"[{self.get_template_type_display()}] {self.name}"
+        return self.name
 
     @property
     def latest_version(self):
@@ -358,10 +387,6 @@ class PipelineTemplateVersion(CoreModel):
 
 class ApplicationPipelineConfig(CoreModel):
     """应用流水线配置"""
-    CONFIG_TYPE_CHOICES = [
-        ('ci', 'CI 配置'),
-        ('cd', 'CD 配置'),
-    ]
 
     ENVIRONMENT_CHOICES = [
         ('dev', '开发环境'),
@@ -381,7 +406,6 @@ class ApplicationPipelineConfig(CoreModel):
         Application, on_delete=models.CASCADE,
         related_name='pipeline_configs', verbose_name="所属应用"
     )
-    config_type = models.CharField(max_length=20, choices=CONFIG_TYPE_CHOICES, verbose_name="配置类型")
     environment = models.CharField(max_length=32, choices=ENVIRONMENT_CHOICES, verbose_name="环境")
     template = models.ForeignKey(
         PipelineTemplate, on_delete=models.SET_NULL,
@@ -413,13 +437,13 @@ class ApplicationPipelineConfig(CoreModel):
         ordering = ["-create_time"]
         constraints = [
             models.UniqueConstraint(
-                fields=['application', 'config_type', 'environment'],
-                name='uk_app_config_type_env'
+                fields=['application', 'environment'],
+                name='uk_app_env'
             )
         ]
 
     def __str__(self):
-        return f"{self.application.name} - {self.get_config_type_display()} - {self.get_environment_display()}"
+        return f"{self.application.name} - {self.get_environment_display()}"
 
     def get_config_version(self):
         """获取最新配置版本"""
@@ -453,17 +477,9 @@ class ApplicationPipelineVersion(CoreModel):
 
 class EnvironmentStrategy(CoreModel):
     """环境策略"""
-    PIPELINE_MODE_CHOICES = [
-        ('integrated', 'CI/CD 合并'),
-        ('separated', 'CI/CD 分离'),
-    ]
-
     name = models.CharField(max_length=64, verbose_name="策略名称")
     code = models.CharField(max_length=32, unique=True, verbose_name="策略编码")
     environment = models.CharField(max_length=32, verbose_name="环境")
-    pipeline_mode = models.CharField(max_length=32, choices=PIPELINE_MODE_CHOICES, verbose_name="流水线模式")
-    ci_jenkins = models.CharField(max_length=128, blank=True, null=True, verbose_name="CI Jenkins 标识")
-    cd_jenkins = models.CharField(max_length=128, blank=True, null=True, verbose_name="CD Jenkins 标识")
     requires_approval = models.BooleanField(default=False, verbose_name="需要审批")
     auto_deploy = models.BooleanField(default=False, verbose_name="自动部署")
     description = models.TextField(blank=True, null=True, verbose_name="描述")
@@ -577,6 +593,12 @@ class ReleaseRecord(CoreModel):
     )
     status_message = models.TextField(blank=True, null=True, verbose_name="状态消息")
     
+    # AI 分析关联对话
+    conversation_id = models.BigIntegerField(
+        null=True, blank=True, verbose_name="关联 AI 对话编号",
+        db_comment="关联 ai_chat_conversation 的 id"
+    )
+
     # 发布人
     released_by = models.CharField(max_length=64, verbose_name="发布人")
     

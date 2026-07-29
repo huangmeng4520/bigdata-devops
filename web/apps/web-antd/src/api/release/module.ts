@@ -9,9 +9,11 @@ export namespace ReleaseModuleApi {
     code: string;
     description?: string;
     gitlab_subgroup_id?: number;
+    gitlab_subgroup_url?: string;
     status: 0 | 1;
     sort: number;
     app_count?: number;
+    repo_count?: number;
     remark?: string;
     creator?: string;
     modifier?: string;
@@ -96,6 +98,30 @@ async function getModuleSyncLogs(id: number) {
   return requestClient.get(`/release/module/${id}/sync_logs/`);
 }
 
+/**
+ * 列出 GitLab Subgroups（用于导入）
+ */
+async function listGitLabSubgroups(params: { parent_id: number; page?: number; per_page?: number }) {
+  return requestClient.get('/release/module/list_gitlab_subgroups/', { params });
+}
+
+/**
+ * 批量从 GitLab 导入 Subgroups
+ */
+async function importGitLabSubgroups(data: { gitlab_subgroup_id: number; project_id: number }[]) {
+  return requestClient.post('/release/module/import_gitlab_subgroups/', { data });
+}
+
+/**
+ * 从 GitLab 导入单个 Subgroup
+ */
+async function importGitLabSubgroup(gitlabSubgroupId: number, projectId: number) {
+  return requestClient.post('/release/module/import_gitlab_subgroup/', { 
+    gitlab_subgroup_id: gitlabSubgroupId,
+    project_id: projectId 
+  });
+}
+
 export {
   createModule,
   deleteModule,
@@ -106,4 +132,7 @@ export {
   getModulesByProject,
   syncModuleGitlab,
   updateModule,
+  listGitLabSubgroups,
+  importGitLabSubgroup,
+  importGitLabSubgroups,
 };

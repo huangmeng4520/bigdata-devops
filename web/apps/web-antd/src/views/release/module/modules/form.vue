@@ -67,6 +67,19 @@ const [Modal, modalApi] = useVbenModal({
           project: projectId,
         };
         formApi.setValues(formValues);
+        if (data.id) {
+          formApi.updateSchema([
+            { fieldName: 'project', componentProps: { disabled: true } },
+            { fieldName: 'name', componentProps: { disabled: true } },
+            { fieldName: 'code', componentProps: { disabled: true } },
+            { fieldName: 'gitlab_subgroup_id', componentProps: { disabled: true } },
+          ]);
+        } else if (formValues.project) {
+          // 从项目/应用页跳转创建时预填了项目，禁用项目字段防止越权改选项目
+          formApi.updateSchema([
+            { fieldName: 'project', componentProps: { disabled: true } },
+          ]);
+        }
       }
     }
   },

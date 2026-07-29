@@ -15,6 +15,7 @@ router.register(r'user', views.UserViewSet)
 router.register(r'login_log', views.LoginLogViewSet)
 router.register(r'config', views.ConfigViewSet)
 router.register(r'city_area', views.CityAreaViewSet)
+router.register(r'data_permission_rule', views.DataPermissionRuleViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),

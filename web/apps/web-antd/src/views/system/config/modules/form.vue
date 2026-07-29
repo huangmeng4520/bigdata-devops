@@ -9,14 +9,11 @@ import { Button } from 'ant-design-vue';
 
 import { useVbenForm } from '#/adapter/form';
 import { $t } from '#/locales';
-import { SystemConfigModel } from '#/models/system/config';
 
 import { useSchema } from '../data';
+import { SystemConfigModel } from '#/models/system/config';
 
 const emit = defineEmits(['success']);
-
-const formModel = new SystemConfigModel();
-
 const formData = ref<SystemConfigApi.SystemConfig>();
 const getTitle = computed(() => {
   return formData.value?.id
@@ -24,6 +21,7 @@ const getTitle = computed(() => {
     : $t('ui.actionTitle.create', [$t('system.config.name')]);
 });
 
+const formModel = new SystemConfigModel();
 const [Form, formApi] = useVbenForm({
   layout: 'horizontal',
   schema: useSchema(),
@@ -55,10 +53,8 @@ const [Modal, modalApi] = useVbenModal({
   onOpenChange(isOpen) {
     if (isOpen) {
       const data = modalApi.getData<SystemConfigApi.SystemConfig>();
-      if (data) {
-        formData.value = data;
-        formApi.setValues(formData.value);
-      }
+      formData.value = data ?? undefined;
+      formApi.setValues(data || {});
     }
   },
 });
@@ -76,4 +72,3 @@ const [Modal, modalApi] = useVbenModal({
     </template>
   </Modal>
 </template>
-<style lang="css" scoped></style>

@@ -1,10 +1,13 @@
 from ..base import MultiModalAICapability
 from langchain_openai import ChatOpenAI
-# from openai import OpenAI # 如需图片/音频/视频等API
 
 class OpenAIAdapter(MultiModalAICapability):
     def __init__(self, api_key, model, **kwargs):
-        self.llm = ChatOpenAI(api_key=api_key, model=model, streaming=True)
+        base_url = kwargs.pop('base_url', None)
+        llm_kwargs = dict(api_key=api_key, model=model, streaming=True)
+        if base_url:
+            llm_kwargs['base_url'] = base_url
+        self.llm = ChatOpenAI(**llm_kwargs)
         self.api_key = api_key
 
     async def chat(self, messages, **kwargs):

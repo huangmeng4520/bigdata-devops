@@ -21,9 +21,9 @@ class HasButtonPermission(BasePermission):
     def has_permission(self, request, view):
         required_code = getattr(view, 'required_permission', None)
         if not required_code:
-            # 可自动推断权限编码逻辑
+            # 自动推断：类名转蛇形（CodeRepository -> code_repository），与前端按钮码（下划线）一致
             app_label = view.queryset.model._meta.app_label
-            model_name = camel_to_snake(view.queryset.model._meta.model_name)
+            model_name = camel_to_snake(view.queryset.model.__name__)
             action = getattr(view, 'action', None)
             action_map = {
                 'create': 'create',
@@ -42,9 +42,31 @@ class HasButtonPermission(BasePermission):
             return False
         if user.is_superuser:
             return True
+        # 同时兼容下划线/连字符模型名，避免历史按钮码不一致导致误拦
+        codes = [required_code]
+        if '_' in required_code:
+            codes.append(required_code.replace('_', '-'))
+        if '-' in required_code:
+            codes.append(required_code.replace('-', '_'))
+        # 系统中未登记该权限码按钮时不做拦截（如辅助类自定义 action），仅要求登录
+        if not Menu.objects.filter(type='button', auth_code__in=codes).exists():
+            return True
         role_ids = user.role.values_list('id', flat=True)
         return Menu.objects.filter(
             type='button',
             role__id__in=role_ids,
-            auth_code=required_code
+            auth_code__in=codes
         ).exists()
+
+
+class HasMutateButtonPermission(HasButtonPermission):
+    """
+    仅对写操作（create/update/destroy 等非安全方法）校验按钮权限，
+    读操作（list/retrieve）放行，避免影响列表、下拉等查询路径造成回归。
+    用法：在视图中设置 permission_classes = [HasMutateButtonPermission]
+    """
+
+    def has_permission(self, request, view):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        return super().has_permission(request, view)

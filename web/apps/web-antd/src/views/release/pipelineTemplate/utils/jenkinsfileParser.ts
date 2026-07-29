@@ -539,6 +539,121 @@ function normalizeIndentation(content: string): string {
 }
 
 /**
+ * 从 Jenkinsfile 内容中提取 environment 块的内容
+ */
+export function extractEnvironment(jenkinsfileContent: string): string {
+  if (!jenkinsfileContent) return '';
+
+  const tokens = tokenize(jenkinsfileContent);
+
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] && tokens[i].type === TokenType.WORD && tokens[i].value === 'environment') {
+      for (let j = i + 1; j < tokens.length; j++) {
+        if (tokens[j] && tokens[j].type === TokenType.LBRACE) {
+          let result = '';
+          let k = j + 1;
+          let depth = 1;
+          while (k < tokens.length && depth > 0) {
+            if (tokens[k] && tokens[k].type === TokenType.LBRACE) depth++;
+            if (tokens[k] && tokens[k].type === TokenType.RBRACE) depth--;
+            if (depth > 0) {
+              result += tokens[k].value;
+            }
+            k++;
+          }
+          return result.trim();
+        }
+      }
+      return '';
+    }
+  }
+
+  return '';
+}
+
+function findMatchingBrace(tokens: Token[], openBraceIndex: number): number {
+  let depth = 1;
+  for (let i = openBraceIndex + 1; i < tokens.length; i++) {
+    if (tokens[i].type === TokenType.LBRACE) depth++;
+    if (tokens[i].type === TokenType.RBRACE) {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * 更新 Jenkinsfile 中的 environment 块
+ * 将 environment { ... } 块替换为新的内容
+ */
+export function updateEnvironment(
+  jenkinsfileContent: string,
+  newEnvContent: string
+): string {
+  if (!jenkinsfileContent) return jenkinsfileContent;
+
+  const tokens = tokenize(jenkinsfileContent);
+  const lines = jenkinsfileContent.split('\n');
+
+  // 找到 environment { ... } 的起止 token 索引
+  let envKeywordToken = -1;
+  let envOpenBraceToken = -1;
+  let envCloseBraceToken = -1;
+
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].type === TokenType.WORD && tokens[i].value === 'environment') {
+      envKeywordToken = i;
+      for (let j = i + 1; j < tokens.length; j++) {
+        if (tokens[j].type === TokenType.LBRACE) {
+          envOpenBraceToken = j;
+          envCloseBraceToken = findMatchingBrace(tokens, j);
+          break;
+        }
+      }
+      break;
+    }
+  }
+
+  if (envKeywordToken === -1 || envOpenBraceToken === -1 || envCloseBraceToken === -1) {
+    throw new Error('Environment block not found in Jenkinsfile');
+  }
+
+  // 计算 environment 块在原始内容中的字符位置
+  let beforeEnvContent = '';
+  let afterEnvContent = '';
+
+  // 从开始到 environment 关键字之前
+  let envStartChar = 0;
+  for (let i = 0; i < envKeywordToken; i++) {
+    envStartChar += tokens[i].value.length;
+  }
+  beforeEnvContent = jenkinsfileContent.substring(0, envStartChar);
+
+  // 从 environment 块结束 } 之后到最后
+  let envEndChar = 0;
+  for (let i = 0; i <= envCloseBraceToken; i++) {
+    envEndChar += tokens[i].value.length;
+  }
+  afterEnvContent = jenkinsfileContent.substring(envEndChar);
+
+  // 计算缩进
+  const envLine = tokens[envKeywordToken].line;
+  const envIndent = lines[envLine]?.match(/^(\s*)/)?.[1] || '';
+
+  // 格式化新的 environment 块
+  const contentIndent = envIndent + '    ';
+  const formattedContent = newEnvContent
+    .split('\n')
+    .map((line) => (line.trim() ? contentIndent + line.trim() : ''))
+    .join('\n');
+
+  const newEnvBlock = `${envIndent}environment {\n${formattedContent}\n${envIndent}}`;
+
+  return beforeEnvContent + newEnvBlock + afterEnvContent;
+}
+
+/**
  * 验证 Jenkinsfile 格式
  */
 export function validateJenkinsfile(content: string): { valid: boolean; error?: string } {

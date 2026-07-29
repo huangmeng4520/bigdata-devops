@@ -31,11 +31,26 @@ const [Form, formApi] = useVbenForm({
   layout: 'vertical',
   schema: useSchema(),
   showDefaultActions: false,
+  handleValuesChange(_values, fieldsChanged) {
+    if (fieldsChanged.includes('project') && !fieldsChanged.includes('module')) {
+      formApi.setFieldValue('module', undefined);
+      formApi.setFieldValue('code_repository', undefined);
+    }
+  },
 });
 
 function resetForm() {
+  const data = formData.value;
+  if (!data) return;
   formApi.resetForm();
-  formApi.setValues(formData.value || {});
+  const toId = (val: any) =>
+    typeof val === 'object' && val !== null ? (val as { id: number }).id : val;
+  formApi.setValues({
+    ...data,
+    project: toId(data.project),
+    module: toId(data.module),
+    code_repository: toId(data.code_repository),
+  });
 }
 
 const [Modal, modalApi] = useVbenModal({
@@ -60,15 +75,23 @@ const [Modal, modalApi] = useVbenModal({
       const data = modalApi.getData<ReleaseApplicationApi.Application>();
       if (data) {
         formData.value = data;
-        // 确保 project 和 module 是 ID 而不是对象
-        const projectId = typeof data.project === 'object' && data.project !== null ? (data.project as { id: number }).id : data.project;
-        const moduleId = typeof data.module === 'object' && data.module !== null ? (data.module as { id: number }).id : data.module;
-        const formValues = {
+        const toId = (val: any) =>
+          typeof val === 'object' && val !== null ? (val as { id: number }).id : val;
+        formApi.setValues({
           ...data,
-          project: projectId,
-          module: moduleId,
-        };
-        formApi.setValues(formValues);
+          project: toId(data.project),
+          module: toId(data.module),
+          code_repository: toId(data.code_repository),
+        });
+        if (data.id) {
+          formApi.updateSchema([
+            { fieldName: 'project', componentProps: { disabled: true } },
+            { fieldName: 'module', componentProps: { disabled: true } },
+            { fieldName: 'code_repository', componentProps: { disabled: true } },
+            { fieldName: 'code', componentProps: { disabled: true } },
+            { fieldName: 'git_url', componentProps: { disabled: true } },
+          ]);
+        }
       } else {
         formData.value = undefined;
       }

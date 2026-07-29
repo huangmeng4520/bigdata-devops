@@ -1,8 +1,7 @@
 <script lang="ts" setup>
-import {
-  type OnActionClickParams,
-  TableAction,
-  type VxeTableGridOptions,
+import type {
+  OnActionClickParams,
+  VxeTableGridOptions,
 } from '#/adapter/vxe-table';
 import type { CDConfigExportApi } from '#/api/release';
 
@@ -10,12 +9,8 @@ import { Page, useVbenModal } from '@vben/common-ui';
 
 import { message } from 'ant-design-vue';
 
-import { useVbenVxeGrid } from '#/adapter/vxe-table';
-import {
-  deleteExport,
-  getExportList,
-  downloadExport,
-} from '#/api/release';
+import { TableAction, useVbenVxeGrid } from '#/adapter/vxe-table';
+import { deleteExport, downloadExport, getExportList } from '#/api/release';
 
 import { useColumns, useGridFormSchema } from './data';
 import Detail from './modules/detail.vue';
@@ -44,9 +39,9 @@ async function onDownload(row: CDConfigExportApi.Export) {
     const a = document.createElement('a');
     a.href = url;
     a.download = `${row.application_name}-${row.environment}-v${row.config_version}.${result.format === 'jenkinsfile' ? 'groovy' : result.format}`;
-    document.body.appendChild(a);
+    document.body.append(a);
     a.click();
-    document.body.removeChild(a);
+    a.remove();
     window.URL.revokeObjectURL(url);
     message.success('下载成功');
     gridApi.query();
@@ -92,22 +87,25 @@ function onDelete(row: CDConfigExportApi.Export) {
 /**
  * 操作按钮
  */
-function onActionClick({ row, code }: OnActionClickParams<CDConfigExportApi.Export>) {
+function onActionClick({
+  row,
+  code,
+}: OnActionClickParams<CDConfigExportApi.Export>) {
   switch (code) {
-    case 'view': {
-      onView(row);
-      break;
-    }
-    case 'download': {
-      onDownload(row as CDConfigExportApi.Export);
-      break;
-    }
     case 'copy': {
       onCopy(row as CDConfigExportApi.Export);
       break;
     }
     case 'delete': {
       onDelete(row as CDConfigExportApi.Export);
+      break;
+    }
+    case 'download': {
+      onDownload(row as CDConfigExportApi.Export);
+      break;
+    }
+    case 'view': {
+      onView(row);
       break;
     }
   }
@@ -158,19 +156,23 @@ function getActionButtons(_row: CDConfigExportApi.Export) {
     {
       code: 'view',
       text: '查看',
+      auth: ['release:cd_config_export:query'],
     },
     {
       code: 'download',
       text: '下载',
+      auth: ['release:cd_config_export:query'],
     },
     {
       code: 'copy',
       text: '复制',
+      auth: ['release:cd_config_export:query'],
     },
     {
       code: 'delete',
       text: '删除',
       danger: true,
+      auth: ['release:cd_config_export:delete'],
     },
   ];
 }
@@ -180,10 +182,7 @@ function getActionButtons(_row: CDConfigExportApi.Export) {
   <Page auto-content-height>
     <Grid table-title="CD配置导出历史">
       <template #action="{ row }">
-        <TableAction
-          :actions="getActionButtons(row)"
-          @click="onActionClick"
-        />
+        <TableAction :actions="getActionButtons(row)" @click="onActionClick" />
       </template>
     </Grid>
     <DetailModal />

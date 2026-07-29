@@ -4,7 +4,7 @@ import { h } from 'vue';
 
 import { Tag } from 'ant-design-vue';
 
-import { PIPELINE_MODE_OPTIONS } from '#/api/release';
+
 
 import type { VbenFormSchema } from '#/adapter/form';
 
@@ -41,21 +41,6 @@ export function useColumns() {
             production: { color: 'red', text: '生产' },
           };
           const item = envMap[row.environment] || { color: 'default', text: row.environment };
-          return h(Tag, { color: item.color }, () => item.text);
-        },
-      },
-    },
-    {
-      field: 'pipeline_mode',
-      title: '流水线模式',
-      width: 120,
-      slots: {
-        default: ({ row }: { row: EnvironmentStrategyApi.Strategy }) => {
-          const modeMap: Record<string, { color: string; text: string }> = {
-            integrated: { color: 'green', text: 'CI/CD合并' },
-            separated: { color: 'purple', text: 'CI/CD分离' },
-          };
-          const item = modeMap[row.pipeline_mode] || { color: 'default', text: row.pipeline_mode };
           return h(Tag, { color: item.color }, () => item.text);
         },
       },
@@ -132,16 +117,6 @@ export function useGridFormSchema(): VbenFormSchema[] {
       label: '环境',
     },
     {
-      component: 'Select',
-      componentProps: {
-        options: [{ label: '全部', value: '' }, ...PIPELINE_MODE_OPTIONS],
-        placeholder: '请选择模式',
-        allowClear: true,
-      },
-      fieldName: 'pipeline_mode',
-      label: '模式',
-    },
-    {
       component: 'Input',
       componentProps: {
         placeholder: '请输入策略名称',
@@ -164,9 +139,4 @@ export function getEnvironmentOptions() {
   ];
 }
 
-/**
- * 流水线模式选项
- */
-export function getPipelineModeOptions() {
-  return PIPELINE_MODE_OPTIONS;
-}
+

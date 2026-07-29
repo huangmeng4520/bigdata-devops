@@ -8,11 +8,10 @@ import type { Ref } from 'vue';
 
 import { z } from '#/adapter/form';
 import { getModuleList, getProjectList } from '#/api/release';
-import { getTemplateList } from '#/api/release/pipelineTemplate';
+import { getCodeRepositoryList } from '#/api/release/codeRepository';
 import { APP_TYPE_OPTIONS } from '#/api/release';
 import { $t } from '#/locales';
 import { format_datetime } from '#/utils/date';
-import { op } from '#/utils/permission';
 
 /**
  * 获取编辑表单的字段配置
@@ -25,7 +24,7 @@ export function useSchema(): VbenFormSchema[] {
       label: '所属项目',
       rules: z.number({ required_error: '请选择所属项目' }),
       componentProps: {
-        api: () => getProjectList({ page_size: 1000, status: 1 }),
+        api: () => getProjectList({ page: 1, page_size: 1000, status: 1 }),
         resultField: 'items',
         labelField: 'name',
         valueField: 'id',
@@ -39,7 +38,18 @@ export function useSchema(): VbenFormSchema[] {
       component: 'ApiSelect',
       fieldName: 'module',
       label: '所属模块',
-      rules: z.number({ required_error: '请选择所属模块' }),
+      componentProps: {
+        api: getModuleList,
+        resultField: 'items',
+        labelField: 'name',
+        valueField: 'id',
+        placeholder: '请先选择项目（可选）',
+        showSearch: true,
+        immediate: false,
+        allowClear: true,
+        filterOption: (input: string, option: { label: string }) =>
+          option.label.toLowerCase().includes(input.toLowerCase()),
+      },
       dependencies: {
         triggerFields: ['project'],
         componentProps: (values) => {
@@ -55,19 +65,42 @@ export function useSchema(): VbenFormSchema[] {
             placeholder: '请选择模块',
           };
         },
-        trigger: (_values, form) => {
-          // 当 project 变化时，清空 module 值
-          form.setFieldValue('module', undefined);
+      },
+    },
+    {
+      component: 'ApiSelect',
+      fieldName: 'code_repository',
+      label: '代码仓库',
+      rules: z.number({ required_error: '请选择代码仓库' }),
+      dependencies: {
+        triggerFields: ['project', 'module'],
+        componentProps: (values) => {
+          const projectId = values.project;
+          const moduleId = values.module;
+          let params: any = { status: 1, page_size: 1000 };
+          
+          if (moduleId) {
+            params.module = moduleId;
+          } else if (projectId) {
+            params.project = projectId;
+          } else {
+            params = undefined;
+          }
+          
+          return {
+            params,
+            placeholder: moduleId || projectId ? '请选择代码仓库' : '请先选择项目或模块',
+          };
+        },
+        trigger: (_values, _form) => {
         },
       },
       componentProps: {
-        api: getModuleList,
+        api: getCodeRepositoryList,
         resultField: 'items',
         labelField: 'name',
         valueField: 'id',
-        placeholder: '请先选择项目',
         showSearch: true,
-        immediate: false,
         filterOption: (input: string, option: { label: string }) =>
           option.label.toLowerCase().includes(input.toLowerCase()),
       },
@@ -102,6 +135,22 @@ export function useSchema(): VbenFormSchema[] {
       },
     },
     {
+      component: 'Input',
+      fieldName: 'code_subpath',
+      label: '代码子目录',
+      componentProps: {
+        placeholder: '仓库内的子目录，如：order-service（可选）',
+      },
+    },
+    {
+      component: 'Input',
+      fieldName: 'build_command',
+      label: '编译命令',
+      componentProps: {
+        placeholder: '如：mvn clean package 或 npm run build（可选）',
+      },
+    },
+    {
       component: 'Textarea',
       fieldName: 'description',
       label: '应用描述',
@@ -116,7 +165,7 @@ export function useSchema(): VbenFormSchema[] {
       fieldName: 'git_url',
       label: 'Git仓库地址',
       componentProps: {
-        placeholder: '如：git@gitlab.example.com:group/project.git',
+        placeholder: '如：git@gitlab.example.com:group/project.git（可选）',
       },
     },
     {
@@ -136,48 +185,6 @@ export function useSchema(): VbenFormSchema[] {
         placeholder: '如：./Dockerfile 或 docker/Dockerfile',
       },
       defaultValue: './Dockerfile',
-    },
-    // CI/CD 模板关联
-    {
-      component: 'Divider',
-      fieldName: 'divider_cicd',
-      label: 'CI/CD 配置',
-      componentProps: {
-        orientation: 'left',
-        plain: true,
-      },
-    },
-    {
-      component: 'ApiSelect',
-      fieldName: 'ci_template',
-      label: 'CI 流水线模板',
-      componentProps: {
-        api: () => getTemplateList({ page_size: 1000, status: 1, template_type: 'ci' }),
-        resultField: 'items',
-        labelField: 'name',
-        valueField: 'id',
-        placeholder: '选择 CI 模板（可选）',
-        showSearch: true,
-        allowClear: true,
-        filterOption: (input: string, option: { label: string }) =>
-          option.label.toLowerCase().includes(input.toLowerCase()),
-      },
-    },
-    {
-      component: 'ApiSelect',
-      fieldName: 'cd_template',
-      label: 'CD 流水线模板',
-      componentProps: {
-        api: () => getTemplateList({ page_size: 1000, status: 1, template_type: 'cd' }),
-        resultField: 'items',
-        labelField: 'name',
-        valueField: 'id',
-        placeholder: '选择 CD 模板（可选）',
-        showSearch: true,
-        allowClear: true,
-        filterOption: (input: string, option: { label: string }) =>
-          option.label.toLowerCase().includes(input.toLowerCase()),
-      },
     },
     {
       component: 'InputNumber',
@@ -319,18 +326,6 @@ export function useColumns(
       width: 100,
     },
     {
-      title: 'CI/CD 模板',
-      width: 140,
-      align: 'center',
-      slots: { default: 'cicd_templates' },
-    },
-    {
-      title: 'GitLab 同步',
-      width: 100,
-      align: 'center',
-      slots: { default: 'gitlab_sync' },
-    },
-    {
       title: 'Jenkins 同步',
       width: 100,
       align: 'center',
@@ -372,29 +367,13 @@ export function useColumns(
     },
     {
       align: 'center',
-      cellRender: {
-        attrs: {
-          nameField: 'name',
-          nameTitle: '应用',
-          onClick: onActionClick,
-        },
-        name: 'CellOperation',
-        options: [
-          op('release:application:release', { code: 'release', text: '发布', type: 'primary' }),
-          op('release:application:update', { code: 'edit', text: '编辑' }),
-          op('release:application:sync-jenkins', { code: 'sync-jenkins', text: '同步 CI/CD' }),
-          op('release:application:sync-gitlab', { code: 'sync-gitlab', text: 'GitLab' }),
-          op('release:application:sync-jenkins-resource', { code: 'sync-jenkins-resource', text: 'Jenkins' }),
-          op('release:application:sync-harbor', { code: 'sync-harbor', text: 'Harbor' }),
-          op('release:application:delete', { code: 'delete', text: '删除', danger: true }),
-        ],
-      },
+      slots: { default: 'operation' },
       field: 'operation',
       fixed: 'right',
       headerAlign: 'center',
       showOverflow: false,
       title: '操作',
-      width: 420,
+      width: 280,
     },
   ];
 }

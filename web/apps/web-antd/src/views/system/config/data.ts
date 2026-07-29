@@ -33,27 +33,32 @@ export function useSchema(): VbenFormSchema[] {
         .max(100, $t('ui.formRules.maxLength', ['参数键名', 100])),
     },
     {
-      component: 'Input',
+      component: 'Textarea',
+      componentProps: {
+        rows: 3,
+        showCount: true,
+        maxlength: 500,
+      },
       fieldName: 'value',
       label: '参数键值',
       rules: z
         .string()
         .min(1, $t('ui.formRules.required', ['参数键值']))
-        .max(100, $t('ui.formRules.maxLength', ['参数键值', 100])),
+        .max(500, $t('ui.formRules.maxLength', ['参数键值', 500])),
     },
     {
       component: 'RadioGroup',
       componentProps: {
         buttonStyle: 'solid',
         options: [
-          { label: '开启', value: 1 },
-          { label: '关闭', value: 0 },
+          { label: '是', value: true },
+          { label: '否', value: false },
         ],
         optionType: 'button',
       },
-      defaultValue: 1,
+      defaultValue: false,
       fieldName: 'config_type',
-      label: '系统内置',
+      label: '是否系统内置',
     },
     {
       component: 'Input',
@@ -114,6 +119,9 @@ export function useColumns(
     {
       field: 'config_type',
       title: '系统内置',
+      width: 100,
+      formatter: ({ cellValue }) =>
+        cellValue === true || cellValue === 1 ? '是' : '否',
     },
     {
       field: 'remark',

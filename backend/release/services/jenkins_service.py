@@ -80,6 +80,20 @@ class JenkinsService(BaseService):
         parts = folder.strip("/").split("/")
         return "/job/" + "/job/".join(parts)
 
+    def _ensure_folder_path(self, folder: str) -> bool:
+        """确保 Jenkins 上完整的文件夹层级路径存在"""
+        parts = folder.strip("/").split("/")
+        accumulated = ""
+        for part in parts:
+            if accumulated:
+                if not self.create_folder(part, parent=accumulated):
+                    return False
+            else:
+                if not self.create_folder(part):
+                    return False
+            accumulated = f"{accumulated}/{part}" if accumulated else part
+        return True
+
     def _request(self, method: str, endpoint: str, **kwargs) -> requests.Response:
         """
         发送请求到 Jenkins API
@@ -218,7 +232,8 @@ class JenkinsService(BaseService):
         git_url: str = None,
         branch: str = "main",
         jenkinsfile_path: str = "Jenkinsfile",
-        description: str = ""
+        description: str = "",
+        jenkinsfile_content: str = None
     ) -> bool:
         """
         创建 Pipeline Job
@@ -230,6 +245,7 @@ class JenkinsService(BaseService):
             branch: 分支
             jenkinsfile_path: Jenkinsfile 路径
             description: 描述
+            jenkinsfile_content: Jenkinsfile 内容（内联脚本模式，不为空时优先使用）
 
         Returns:
             是否创建成功
@@ -240,12 +256,18 @@ class JenkinsService(BaseService):
             return True
 
         # Pipeline Job XML 配置
-        job_xml = self._generate_pipeline_xml(
-            git_url=git_url,
-            branch=branch,
-            jenkinsfile_path=jenkinsfile_path,
-            description=description
-        )
+        if jenkinsfile_content:
+            job_xml = self._generate_inline_pipeline_xml(
+                script=jenkinsfile_content,
+                description=description
+            )
+        else:
+            job_xml = self._generate_pipeline_xml(
+                git_url=git_url,
+                branch=branch,
+                jenkinsfile_path=jenkinsfile_path,
+                description=description
+            )
 
         endpoint = f"{self._build_job_path(folder)}/createItem?name={name}" if folder else f"/createItem?name={name}"
 
@@ -332,85 +354,70 @@ class JenkinsService(BaseService):
 
     # ==================== 批量创建 ====================
 
-    def create_ci_cd_jobs(
+    def create_pipeline_job_with_folder(
         self,
         project_code: str,
         module_code: str,
         app_code: str,
+        environment_code: str,
         git_url: str,
         branch: str = "main"
-    ) -> Dict[str, bool]:
+    ) -> bool:
         """
-        创建 CI/CD Jobs
+        创建 Pipeline Job（含目录结构）
 
-        按照命名规范创建：
-        - 项目目录: {project_code}
-        - 模块目录: {project_code}/{module_code}
-        - CI Job: {project_code}/{module_code}/{app_code}-ci
-        - CD Job: {project_code}/{module_code}/{app_code}-cd
+        Job 路径: {project_code}/{module_code}/{app_code}/{environment_code}
 
         Args:
             project_code: 项目编码
             module_code: 模块编码
             app_code: 应用编码
+            environment_code: 环境编码
             git_url: Git 仓库地址
             branch: 分支
 
         Returns:
-            创建结果
+            是否创建成功
         """
-        results = {"ci": False, "cd": False}
-
         try:
-            # 1. 创建项目目录
             if not self.create_folder(project_code):
-                return results
-
-            # 2. 创建模块目录
+                return False
             if not self.create_folder(module_code, parent=project_code):
-                return results
-
-            folder = f"{project_code}/{module_code}"
-
-            # 3. 创建 CI Job
-            results["ci"] = self.create_pipeline_job(
-                name=f"{app_code}-ci",
-                folder=folder,
+                return False
+            app_folder = f"{project_code}/{module_code}/{app_code}"
+            if not self.create_folder(app_code, parent=f"{project_code}/{module_code}"):
+                return False
+            return self.create_pipeline_job(
+                name=environment_code,
+                folder=app_folder,
                 git_url=git_url,
                 branch=branch,
                 jenkinsfile_path="Jenkinsfile",
-                description=f"CI Pipeline for {project_code}/{module_code}/{app_code}"
+                description=f"Pipeline for {project_code}/{module_code}/{app_code}/{environment_code}"
             )
-
-            # 4. 创建 CD Job
-            results["cd"] = self.create_pipeline_job(
-                name=f"{app_code}-cd",
-                folder=folder,
-                git_url=git_url,
-                branch=branch,
-                jenkinsfile_path="Jenkinsfile.deploy",
-                description=f"CD Pipeline for {project_code}/{module_code}/{app_code}"
-            )
-
         except DevOpsException as e:
-            self._log_error(f"创建 CI/CD Jobs 失败: {e.message}")
+            self._log_error(f"创建 Pipeline Job 失败: {e.message}")
+            return False
 
-        return results
-
-    def get_job_full_name(self, project_code: str, module_code: str, app_code: str, job_type: str = "ci") -> str:
+    def get_job_full_name(self, project_code: str, module_code: str, app_code: str, environment_code: str = None) -> str:
         """
         获取 Job 完整名称
+
+        格式: {project_code}/{module_code}/{app_code}/{environment_code}
 
         Args:
             project_code: 项目编码
             module_code: 模块编码
             app_code: 应用编码
-            job_type: "ci" 或 "cd"
+            environment_code: 环境编码（省略时返回应用目录）
 
         Returns:
             Job 完整路径
         """
-        return f"{project_code}/{module_code}/{app_code}-{job_type}"
+        base = f"{project_code}/{module_code}/{app_code}"
+        if environment_code:
+            return f"{base}/{environment_code}"
+        return base
 
     def test_connection(self) -> bool:
         """
@@ -476,13 +483,16 @@ class JenkinsService(BaseService):
         # 检查 Job 是否存在
         if not self.job_exists(name, folder):
             self._log_warning(f"Jenkins Job 不存在: {name}", {"folder": folder})
-            # 自动创建
+            # 自动创建（先确保文件夹层级存在）
+            if folder and not self._ensure_folder_path(folder):
+                return False
             return self.create_pipeline_job(
                 name=name,
                 folder=folder,
                 git_url=git_url,
                 branch=branch,
-                description=description
+                description=description,
+                jenkinsfile_content=jenkinsfile_content
             )
 
         # 生成新的配置 XML

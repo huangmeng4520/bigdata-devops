@@ -63,12 +63,12 @@ node 版本v22.17.0
         'PASSWORD': '',
         'HOST': 'localhost',
     }
-}
+   }
 ```
 1. 进入 backend 目录：
    ```bash
    cd backend
-   ```
+```
 2. 安装依赖：
    ```bash
    pip install -r requirements.txt
@@ -345,13 +345,13 @@ pipeline {
             description: '发布环境（若选择，将覆盖分支自动判断）'
         )
     }
-
+    
     environment {
         DOCKER_REGISTRY = 'https://192.168.3.134/'
         GIT_REPO = "http://192.168.3.134:8083/${params.PROJECT}/${params.MODULE}/${params.APP}.git"
         IMAGE_BASE = "${DOCKER_REGISTRY}/${params.PROJECT}-${params.MODULE}/${params.APP}"
     }
-
+    
     stages {
         stage('Checkout') {
             steps {
@@ -360,7 +360,7 @@ pipeline {
                     credentialsId: 'gitlab-http-credentials'   // 确保此 ID 已在 Jenkins 中配置
             }
         }
-
+    
         stage('Determine Version and Tag') {
             steps {
                 script {
@@ -376,7 +376,7 @@ pipeline {
                     } else {
                         env.VERSION = params.VERSION
                     }
-
+    
                     // ----- 环境（标签后缀）处理 -----
                     if (params.ENVIRONMENT) {
                         // 如果用户显式指定了环境，直接使用
@@ -393,29 +393,29 @@ pipeline {
                             env.TAG_SUFFIX = 'test'
                         }
                     }
-
+    
                     env.FULL_TAG = "${env.VERSION}-${env.TAG_SUFFIX}"
                     env.IMAGE = "${IMAGE_BASE}:${env.FULL_TAG}"
-
+    
                     echo "构建标签: ${env.FULL_TAG}"
                     echo "镜像全名: ${env.IMAGE}"
                 }
             }
         }
-
+    
         stage('Build & Test') {
             steps {
                 // 请根据实际项目替换构建命令
                 sh 'mvn clean package'
             }
         }
-
+    
         stage('Docker Build') {
             steps {
                 sh "docker build -t ${IMAGE} ."
             }
         }
-
+    
         stage('Push to Harbor') {
             steps {
                 withCredentials([usernamePassword(
@@ -448,3 +448,23 @@ pipeline {
 
 
 "{\"type\":\"PUSH_ARTIFACT\",\"occur_at\":1772520153,\"operator\":\"admin\",\"event_data\":{\"resources\":[{\"digest\":\"sha256:5f6399566cce23307827b8aa27f021c3d30cf5082dda45931c9ee035941beb6f\",\"tag\":\"v1\",\"resource_url\":\"harbor.ynbigdata.com/git_add_group-sugroup_moudel/nginx:v1\"}],\"repository\":{\"date_created\":1772520153,\"name\":\"nginx\",\"namespace\":\"git_add_group-sugroup_moudel\",\"repo_full_name\":\"git_add_group-sugroup_moudel/nginx\",\"repo_type\":\"private\"}}}"
+
+
+# git账号密码
+git root:ZeTHbwj52YrqCnlCs8i1rCa3FVvZVvMRkyCnlrbR/j8=
+# harbor账号密码
+https://harbor.ynbigdata.com/
+admin:Harbor12345
+重置密码
+psql -U postgres -d registry
+select * from harbor_user;
+update harbor_user set salt='', password='' where user_id = 1;
+重启harbor的core服务，/Users/tengyun/ynbigdata/harbor/harbor/common/config/core/env查看密码
+
+
+
+# jenkins
+
+http://172.17.20.188:8080/jenkins/
+
+opsadmin:bigdata@2026

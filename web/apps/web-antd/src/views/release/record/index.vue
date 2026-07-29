@@ -1,23 +1,36 @@
 <script lang="ts" setup>
-import { ref, reactive, onMounted, h } from 'vue';
-import { Badge, Button, Card, Form, Input, message, RangePicker, Select, Table, Tag } from 'ant-design-vue';
 import type { TableColumnsType } from 'ant-design-vue';
-import dayjs from 'dayjs';
+
+import type { ReleaseRecord } from '#/api/release/record';
+
+import { h, onMounted, reactive, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
 import {
-  type ReleaseRecord,
-  getReleaseList,
-  cancelRelease,
-  retryBuild,
-  approveRelease,
-  rejectRelease,
-  RELEASE_STATUS_MAP,
-  ENVIRONMENT_OPTIONS,
-  ENVIRONMENT_MAP,
-} from '#/api/release/record';
+  Badge,
+  Button,
+  Card,
+  Form,
+  Input,
+  message,
+  RangePicker,
+  Select,
+  Table,
+  Tag,
+} from 'ant-design-vue';
 
-import BuildLogModal from './modules/BuildLogModal.vue';
+import {
+  cancelRelease,
+  createAIAnalysis,
+  ENVIRONMENT_OPTIONS,
+  getReleaseList,
+  RELEASE_STATUS_MAP,
+  retryBuild,
+} from '#/api/release/record';
+import { hasPermission } from '#/utils/permission';
+
 import ApprovalModal from './modules/ApprovalModal.vue';
+import BuildLogModal from './modules/BuildLogModal.vue';
 
 // 搜索表单
 const searchForm = reactive({
@@ -45,6 +58,7 @@ const loading = ref(false);
 const tableData = ref<ReleaseRecord[]>([]);
 
 // 弹窗引用
+const router = useRouter();
 const buildLogModalRef = ref();
 const approvalModalRef = ref();
 
@@ -80,7 +94,7 @@ const columns: TableColumnsType = [
     title: '构建号',
     dataIndex: 'jenkins_build_number',
     width: 80,
-    customRender: ({ text }) => text ? `#${text}` : '-',
+    customRender: ({ text }) => (text ? `#${text}` : '-'),
   },
   {
     title: '状态',
@@ -88,7 +102,10 @@ const columns: TableColumnsType = [
     width: 100,
     customRender: ({ text }) => {
       const statusInfo = RELEASE_STATUS_MAP[text] || { text, color: 'default' };
-      return h(Badge, { status: statusInfo.color as any, text: statusInfo.text });
+      return h(Badge, {
+        status: statusInfo.color as any,
+        text: statusInfo.text,
+      });
     },
   },
   {
@@ -215,6 +232,22 @@ async function handleRetry(record: ReleaseRecord) {
   }
 }
 
+// AI 分析构建失败
+async function handleAIAnalyze(record: ReleaseRecord) {
+  try {
+    const res = await createAIAnalysis(record.id);
+    const conversationId = res.conversation_id ?? res;
+    router.push({
+      path: '/ai/chat',
+      query: { conversation_id: conversationId, auto_send: '1' },
+    });
+  } catch (error: any) {
+    message.error(
+      error?.response?.data?.error || error?.message || '创建 AI 分析失败',
+    );
+  }
+}
+
 // 打开审批弹窗
 function handleApprove(record: ReleaseRecord, type: 'approve' | 'reject') {
   approvalModalRef.value?.open(record, type);
@@ -232,7 +265,7 @@ function getStatusColor(status: string): string {
 
 // 判断是否可以取消
 function canCancel(record: ReleaseRecord): boolean {
-  return ['pending', 'approval_pending', 'building'].includes(record.status);
+  return ['approval_pending', 'building', 'pending'].includes(record.status);
 }
 
 // 判断是否可以重试
@@ -267,7 +300,7 @@ onMounted(() => {
             placeholder="请输入应用名称"
             allow-clear
             style="width: 180px"
-            @pressEnter="handleSearch"
+            @press-enter="handleSearch"
           />
         </Form.Item>
         <Form.Item label="目标环境">
@@ -286,7 +319,11 @@ onMounted(() => {
             allow-clear
             style="width: 120px"
           >
-            <Select.Option v-for="(info, key) in RELEASE_STATUS_MAP" :key="key" :value="key">
+            <Select.Option
+              v-for="(info, key) in RELEASE_STATUS_MAP"
+              :key="key"
+              :value="key"
+            >
               {{ info.text }}
             </Select.Option>
           </Select>
@@ -297,7 +334,7 @@ onMounted(() => {
             placeholder="请输入发布人"
             allow-clear
             style="width: 120px"
-            @pressEnter="handleSearch"
+            @press-enter="handleSearch"
           />
         </Form.Item>
         <Form.Item label="发布时间">
@@ -326,11 +363,19 @@ onMounted(() => {
       >
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'action'">
-            <Button type="link" size="small" @click="handleViewLog(record)" :disabled="!canViewLog(record)">
+            <Button
+              v-if="hasPermission('release:release_record:query')"
+              type="link"
+              size="small"
+              @click="handleViewLog(record)"
+              :disabled="!canViewLog(record)"
+            >
               查看日志
             </Button>
             <Button
-              v-if="canApprove(record)"
+              v-if="
+                canApprove(record) && hasPermission('release:release_record:approve')
+              "
               type="link"
               size="small"
               @click="handleApprove(record, 'approve')"
@@ -338,7 +383,9 @@ onMounted(() => {
               通过
             </Button>
             <Button
-              v-if="canApprove(record)"
+              v-if="
+                canApprove(record) && hasPermission('release:release_record:reject')
+              "
               type="link"
               size="small"
               danger
@@ -347,7 +394,15 @@ onMounted(() => {
               拒绝
             </Button>
             <Button
-              v-if="canRetry(record)"
+              v-if="record.status === 'build_failed'"
+              type="link"
+              size="small"
+              @click="handleAIAnalyze(record)"
+            >
+              AI 分析
+            </Button>
+            <Button
+              v-if="canRetry(record) && hasPermission('release:release_record:retry')"
               type="link"
               size="small"
               @click="handleRetry(record)"
@@ -355,7 +410,7 @@ onMounted(() => {
               重试
             </Button>
             <Button
-              v-if="canCancel(record)"
+              v-if="canCancel(record) && hasPermission('release:release_record:cancel')"
               type="link"
               size="small"
               danger

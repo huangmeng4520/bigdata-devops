@@ -26,6 +26,8 @@
     "#/*": "./src/*"
   },
   "dependencies": {
+    "@vben-core/menu-ui": "workspace:*",
+    "@vben-core/popup-ui": "workspace:*",
     "@vben/access": "workspace:*",
     "@vben/common-ui": "workspace:*",
     "@vben/constants": "workspace:*",
@@ -41,15 +43,21 @@
     "@vben/types": "workspace:*",
     "@vben/utils": "workspace:*",
     "@vueuse/core": "catalog:",
-    "@vben-core/menu-ui": "workspace:*",
-    "@vben-core/popup-ui": "workspace:*",
     "ant-design-vue": "catalog:",
     "dayjs": "catalog:",
+    "dompurify": "^3.4.12",
+    "highlight.js": "^11.11.1",
+    "markdown-it": "^14.3.0",
+    "markdown-it-task-lists": "^2.1.1",
+    "marked": "^18.0.7",
+    "marked-highlight": "^2.2.4",
     "pinia": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:"
   },
   "devDependencies": {
+    "@types/dompurify": "^3.2.0",
+    "@types/markdown-it": "^14.1.2",
     "ali-oss": "^6.23.0"
   }
 }

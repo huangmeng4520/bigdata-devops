@@ -8,7 +8,6 @@ export * from './deployment';
 
 // applicationPipeline 和 application 都有 syncToJenkins，显式导出避免冲突
 export {
-  CONFIG_TYPE_OPTIONS,
   ENVIRONMENT_OPTIONS,
   createConfig,
   deleteConfig,

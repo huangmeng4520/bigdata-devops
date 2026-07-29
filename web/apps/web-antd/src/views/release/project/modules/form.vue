@@ -61,6 +61,12 @@ const [Modal, modalApi] = useVbenModal({
       if (data) {
         formData.value = data;
         formApi.setValues(formData.value);
+        if (data.id) {
+          formApi.updateSchema([
+            { fieldName: 'code', componentProps: { disabled: true } },
+            { fieldName: 'gitlab_group_id', componentProps: { disabled: true } },
+          ]);
+        }
       }
     }
   },

@@ -3,10 +3,9 @@ __all__ = [
     'ProjectViewSet',
     'ModuleViewSet',
     'ApplicationViewSet',
+    'CodeRepositoryViewSet',
     'ConfigPackageViewSet',
     'SyncLogViewSet',
-    'TemplateViewSet',
-    # CI/CD 模板系统
     'PipelineTemplateViewSet',
     'PipelineTemplateVersionViewSet',
     'ApplicationPipelineConfigViewSet',
@@ -30,10 +29,9 @@ __all__ = [
 from .project import ProjectViewSet
 from .module import ModuleViewSet
 from .application import ApplicationViewSet
+from .code_repository import CodeRepositoryViewSet
 from .config_package import ConfigPackageViewSet
 from .sync_log import SyncLogViewSet
-from .template import TemplateViewSet
-# CI/CD 模板系统
 from .pipeline_template import PipelineTemplateViewSet, PipelineTemplateVersionViewSet
 from .application_pipeline import ApplicationPipelineConfigViewSet, ApplicationPipelineVersionViewSet
 from .environment_strategy import EnvironmentStrategyViewSet

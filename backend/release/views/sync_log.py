@@ -4,12 +4,13 @@
 """
 from django_filters.rest_framework import DjangoFilterBackend
 from utils.custom_model_viewSet import CustomModelViewSet
+from utils.data_permission import DataPermissionMixin
 from ..models import SyncLog
 from ..serializers import SyncLogSerializer
 from ..filters import SyncLogFilter
 
 
-class SyncLogViewSet(CustomModelViewSet):
+class SyncLogViewSet(DataPermissionMixin, CustomModelViewSet):
     """同步日志管理"""
     queryset = SyncLog.objects.all()
     serializer_class = SyncLogSerializer
@@ -18,11 +19,15 @@ class SyncLogViewSet(CustomModelViewSet):
     search_fields = ["resource_name"]
     ordering_fields = ["create_time"]
 
+    # 数据权限：按所属项目隔离（project 为空的全局日志不纳入隔离）
+    scope_type = 'project'
+    scope_field = 'project_id'
+
     def get_queryset(self):
         queryset = super().get_queryset().select_related(
             "config_package", "project", "module", "app"
         )
-        return queryset
+        return self.data_permission_filter(queryset)
 
     # 同步日志只读
     http_method_names = ['get', 'head', 'options']

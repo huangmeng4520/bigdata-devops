@@ -8,6 +8,8 @@ from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from utils.custom_model_viewSet import CustomModelViewSet
+from utils.data_permission import DataPermissionMixin
+from utils.permissions import HasMutateButtonPermission
 from ..models import (
     ApplicationPipelineConfig, ApplicationPipelineVersion,
     PipelineTemplate, PipelineTemplateVersion, Application
@@ -19,15 +21,20 @@ from ..serializers import (
 from ..filters import ApplicationPipelineConfigFilter, ApplicationPipelineVersionFilter
 
 
-class ApplicationPipelineConfigViewSet(CustomModelViewSet):
+class ApplicationPipelineConfigViewSet(DataPermissionMixin, CustomModelViewSet):
     """应用流水线配置管理"""
     queryset = ApplicationPipelineConfig.objects.all()
     serializer_class = ApplicationPipelineConfigSerializer
+    permission_classes = [HasMutateButtonPermission]
     filter_backends = [DjangoFilterBackend]
     filterset_class = ApplicationPipelineConfigFilter
     search_fields = ["application__name", "application__code"]
     ordering_fields = ["create_time", "application__name"]
     enable_soft_delete = True
+
+    # 数据权限：按所属应用→项目级联隔离
+    scope_type = 'project'
+    scope_field = 'application__project_id'
 
     action_serializers = {
         "create": ApplicationPipelineConfigCreateSerializer,
@@ -38,13 +45,35 @@ class ApplicationPipelineConfigViewSet(CustomModelViewSet):
         queryset = super().get_queryset()
         if self.enable_soft_delete:
             queryset = queryset.filter(is_deleted=False)
-        return queryset.select_related(
+        queryset = queryset.select_related(
             'application', 'template', 'template_version'
         )
+        return self.data_permission_filter(queryset)
 
     def perform_create(self, serializer):
-        """创建时自动设置创建人"""
-        serializer.save(creator=self.request.user.username)
+        """创建时自动设置创建人，同应用同环境已存在则更新"""
+        app = serializer.validated_data.get('application')
+        env = serializer.validated_data.get('environment')
+        existing = ApplicationPipelineConfig.objects.filter(
+            application=app, environment=env, is_deleted=False
+        ).first()
+        if existing:
+            self.check_object_data_permission(existing)
+            for attr, value in serializer.validated_data.items():
+                setattr(existing, attr, value)
+            existing.modifier = self.request.user.username
+            existing.current_version += 1
+            existing.save()
+        else:
+            serializer.save(creator=self.request.user.username)
+
+    def perform_update(self, serializer):
+        self.check_object_data_permission(serializer.instance)
+        serializer.save(modifier=self.request.user.username)
+
+    def perform_destroy(self, instance):
+        self.check_object_data_permission(instance)
+        super().perform_destroy(instance)
 
     def perform_update(self, serializer):
         """更新时自动设置修改人并创建新版本"""
@@ -73,57 +102,34 @@ class ApplicationPipelineConfigViewSet(CustomModelViewSet):
     @action(detail=True, methods=['post'])
     def generate(self, request, pk=None):
         """生成 Jenkinsfile"""
+        from ..pipeline_utils import get_template_content, build_pipeline_variables
+
         config = self.get_object()
-        
-        # 获取模板内容
-        if config.template_version:
-            template_content = config.template_version.content
-            template_variables = config.template_version.variables
-        elif config.template:
-            latest_version = config.template.latest_version
-            if latest_version:
-                template_content = latest_version.content
-                template_variables = latest_version.variables
-            else:
-                return Response({'code': 1, 'message': '模板没有可用版本'}, status=status.HTTP_400_BAD_REQUEST)
-        elif config.custom_content:
-            template_content = config.custom_content
-            template_variables = {}
-        else:
-            return Response({'code': 1, 'message': '未配置模板或自定义内容'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # 合并变量：模板默认值 + 用户配置值
-        final_variables = {}
-        if template_variables and isinstance(template_variables, dict):
-            for var in template_variables.get('variables', []):
-                var_name = var.get('name')
-                if var_name:
-                    final_variables[var_name] = var.get('default', '')
-        
-        # 用户配置覆盖默认值
-        if config.variables:
-            final_variables.update(config.variables)
-        
-        # 替换变量
+        app = config.application
+
+        template_content, template_variables = get_template_content(config)
+        if not template_content:
+            return Response({'code': 1, 'message': '模板没有可用版本'}, status=status.HTTP_400_BAD_REQUEST)
+
+        variables = build_pipeline_variables(app, config, template_variables)
+
         content = template_content
-        for key, value in final_variables.items():
+        for key, value in variables.items():
             content = content.replace(f'${{{key}}}', str(value))
-        
-        # 创建配置版本
+
         new_version = config.current_version + 1
         app_version = ApplicationPipelineVersion.objects.create(
             config=config,
             version=new_version,
             content=content,
-            variables_snapshot=final_variables,
+            variables_snapshot=variables,
             stages_snapshot=config.stages_config,
             generated_by=request.user.username
         )
-        
-        # 更新配置的当前版本号
+
         config.current_version = new_version
         config.save()
-        
+
         return Response({
             'code': 0,
             'data': {
@@ -211,60 +217,36 @@ class ApplicationPipelineConfigViewSet(CustomModelViewSet):
 
         一键操作：生成新版本 + 触发同步
         """
+        from ..pipeline_utils import get_template_content, build_pipeline_variables
         from ..tasks import sync_jenkins_config
 
         config = self.get_object()
+        app = config.application
 
-        # 获取模板内容
-        if config.template_version:
-            template_content = config.template_version.content
-            template_variables = config.template_version.variables
-        elif config.template:
-            latest_version = config.template.latest_version
-            if latest_version:
-                template_content = latest_version.content
-                template_variables = latest_version.variables
-            else:
-                return Response({'code': 1, 'message': '模板没有可用版本'}, status=status.HTTP_400_BAD_REQUEST)
-        elif config.custom_content:
-            template_content = config.custom_content
-            template_variables = {}
-        else:
-            return Response({'code': 1, 'message': '未配置模板或自定义内容'}, status=status.HTTP_400_BAD_REQUEST)
+        template_content, template_variables = get_template_content(config)
+        if not template_content:
+            return Response({'code': 1, 'message': '模板没有可用版本'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 合并变量
-        final_variables = {}
-        if template_variables and isinstance(template_variables, dict):
-            for var in template_variables.get('variables', []):
-                var_name = var.get('name')
-                if var_name:
-                    final_variables[var_name] = var.get('default', '')
+        variables = build_pipeline_variables(app, config, template_variables)
 
-        if config.variables:
-            final_variables.update(config.variables)
-
-        # 替换变量
         content = template_content
-        for key, value in final_variables.items():
+        for key, value in variables.items():
             content = content.replace(f'${{{key}}}', str(value))
 
-        # 创建配置版本
         new_version = config.current_version + 1
         app_version = ApplicationPipelineVersion.objects.create(
             config=config,
             version=new_version,
             content=content,
-            variables_snapshot=final_variables,
+            variables_snapshot=variables,
             stages_snapshot=config.stages_config,
             generated_by=request.user.username
         )
 
-        # 更新配置的当前版本号
         config.current_version = new_version
-        config.jenkins_sync_status = 0  # 待同步
+        config.jenkins_sync_status = 0
         config.save(update_fields=['current_version', 'jenkins_sync_status'])
 
-        # 触发同步任务
         task = sync_jenkins_config.delay(config.id)
 
         return Response({

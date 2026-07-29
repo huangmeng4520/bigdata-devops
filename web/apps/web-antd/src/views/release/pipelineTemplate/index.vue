@@ -1,7 +1,7 @@
 <script lang="ts" setup>
-import {
-  type OnActionClickParams,
-  type VxeTableGridOptions,
+import type {
+  OnActionClickParams,
+  VxeTableGridOptions,
 } from '#/adapter/vxe-table';
 import type { PipelineTemplateApi } from '#/api/release';
 
@@ -18,8 +18,9 @@ import {
   getTemplateList,
   importTemplate,
 } from '#/api/release';
+import { hasPermission } from '#/utils/permission';
 
-import { useColumns, useGridFormSchema, setOnActionClick } from './data';
+import { setOnActionClick, useColumns, useGridFormSchema } from './data';
 import Form from './modules/form.vue';
 import Versions from './modules/versions.vue';
 
@@ -88,7 +89,9 @@ function onExport(row: PipelineTemplateApi.Template) {
   });
   exportTemplate(row.id)
     .then((data) => {
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: 'application/json',
+      });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -112,12 +115,12 @@ function onImport() {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = '.json';
-  input.onchange = (e: any) => {
+  input.addEventListener('change', (e: any) => {
     const file = e.target.files[0];
     if (!file) return;
-    
+
     const reader = new FileReader();
-    reader.onload = (event: any) => {
+    reader.addEventListener('load', (event: any) => {
       try {
         const data = JSON.parse(event.target.result);
         const hideLoading = message.loading({
@@ -138,9 +141,9 @@ function onImport() {
       } catch {
         message.error('文件格式错误');
       }
-    };
+    });
     reader.readAsText(file);
-  };
+  });
   input.click();
 }
 
@@ -168,26 +171,29 @@ function onDelete(row: PipelineTemplateApi.Template) {
 /**
  * 操作按钮
  */
-function onActionClick({ row, code }: OnActionClickParams<PipelineTemplateApi.Template>) {
+function onActionClick({
+  row,
+  code,
+}: OnActionClickParams<PipelineTemplateApi.Template>) {
   switch (code) {
-    case 'edit': {
-      onEdit(row);
-      break;
-    }
-    case 'versions': {
-      onVersions(row);
-      break;
-    }
     case 'copy': {
       onCopy(row);
+      break;
+    }
+    case 'delete': {
+      onDelete(row);
+      break;
+    }
+    case 'edit': {
+      onEdit(row);
       break;
     }
     case 'export': {
       onExport(row);
       break;
     }
-    case 'delete': {
-      onDelete(row);
+    case 'versions': {
+      onVersions(row);
       break;
     }
   }
@@ -241,11 +247,18 @@ const [Grid, gridApi] = useVbenVxeGrid({
   <Page auto-content-height>
     <Grid table-title="流水线模板管理">
       <template #toolbar-tools>
-        <a-button type="primary" @click="onCreate">
+        <a-button
+          v-if="hasPermission('release:pipeline_template:create')"
+          type="primary"
+          @click="onCreate"
+        >
           <Plus class="mr-1" />
           创建模板
         </a-button>
-        <a-button @click="onImport">
+        <a-button
+          v-if="hasPermission('release:pipeline_template:create')"
+          @click="onImport"
+        >
           导入模板
         </a-button>
       </template>

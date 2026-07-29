@@ -11,6 +11,7 @@ import { objectOmit } from '@vueuse/core';
 import { Button, Image, Popconfirm, Switch, Tag } from 'ant-design-vue';
 
 import { $t } from '#/locales';
+import { usePermissionStore } from '#/store/permission';
 
 import { useVbenForm } from './form';
 
@@ -152,9 +153,18 @@ setupVbenVxeTable({
             text: $t('common.edit'),
           },
         };
+        const permissionStore = usePermissionStore();
         const operations: Array<Recordable<any>> = (
           options || ['edit', 'delete']
         )
+          // 过滤 op() 无权限时返回的 false 项
+          .filter((opt) => !!opt)
+          // 支持 auth: ['xxx:xxx:xxx'] 属性，无任一权限码则隐藏按钮
+          .filter((opt) => {
+            const auth: string[] | undefined = (opt as Recordable<any>)?.auth;
+            if (!Array.isArray(auth) || auth.length === 0) return true;
+            return auth.some((code) => permissionStore.hasPermission(code));
+          })
           .map((opt) => {
             if (isString(opt)) {
               return presets[opt]

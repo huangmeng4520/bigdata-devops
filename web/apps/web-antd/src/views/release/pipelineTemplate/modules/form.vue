@@ -22,247 +22,187 @@ const formData = ref<Partial<PipelineTemplateApi.Template>>();
 const isEdit = computed(() => !!formData.value?.id);
 const modalTitle = computed(() => (isEdit.value ? '编辑模板' : '创建模板'));
 
+function extractEnvironment(fullContent: string): { environment: string; content: string } {
+  const envMatch = fullContent.match(/environment\s*\{/);
+  if (!envMatch) return { environment: '', content: fullContent };
+  const start = envMatch.index! + envMatch[0].length;
+  let depth = 1;
+  let inString: string | null = null;
+  let end = start;
+  for (const ch of fullContent.slice(start)) {
+    if (inString) {
+      if (ch === inString) inString = null;
+    } else if (ch === "'" || ch === '"') {
+      inString = ch;
+    } else if (ch === '{') {
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0) break;
+    }
+    end++;
+  }
+  const env = fullContent.slice(start, end);
+  const content = (fullContent.slice(0, envMatch.index!) + fullContent.slice(end + 1)).trim();
+  return { environment: env.trim(), content };
+}
+
+function mergeEnvironment(environment: string, content: string): string {
+  if (!environment.trim()) return content;
+  const lines = content.split('\n');
+  const stagesIdx = lines.findIndex(l => l.trim() === 'stages {');
+  if (stagesIdx === -1) return `environment {\n${environment}\n}\n\n${content}`;
+  const indent = lines[stagesIdx].match(/^(\s*)/)?.[1] || '';
+  const envBlock = `${indent}environment {\n${environment
+    .split('\n')
+    .map(l => `${indent}    ${l.trim()}`)
+    .join('\n')}\n${indent}}\n`;
+  lines.splice(stagesIdx, 0, '', envBlock);
+  return lines.join('\n');
+}
+
 const [Form, formApi] = useVbenForm({
   layout: 'vertical',
-  schema: useSchema(false), // 初始显示所有字段
+  schema: useSchema(false),
   showDefaultActions: false,
   handleValuesChange(values, fieldsChanged) {
-    // 只在创建模式下，当语言或类型变化时更新 Jenkinsfile 内容
-    if (!isEdit.value && 
-        (fieldsChanged.includes('template_type') || fieldsChanged.includes('language'))) {
-      const newContent = getDefaultContent(values.template_type as string, values.language as string);
-      formApi.setFieldValue('content', newContent);
+    if (!isEdit.value && fieldsChanged.includes('language')) {
+      const full = getDefaultContent();
+      const { environment, content } = extractEnvironment(full);
+      formApi.setFieldValue('environment', environment);
+      formApi.setFieldValue('content', content);
     }
   },
 });
 
-function getDefaultContent(templateType?: string, language?: string) {
-  const tmplType = templateType || 'ci';
-  const lang = language || 'java';
+function getDefaultEnv(): string {
+  return `DOCKER_REGISTRY = 'harbor.ynbigdata.com'
+GIT_REPO = '\${GIT_REPO}'
+IMAGE_BASE = "\${DOCKER_REGISTRY}/\${params.PROJECT}-\${params.MODULE}/\${params.APP}"`;
+}
 
-  if (tmplType === 'ci') {
-    if (lang === 'java') {
-      return `pipeline {
-    agent {
-        kubernetes {
-            label 'maven-builder'
-            defaultContainer 'maven'
-        }
-    }
-    environment {
-        MAVEN_OPTS = '-Dmaven.repo.local=/root/.m2/repository'
-    }
-    stages {
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
-        stage('Build') {
-            steps {
-                sh 'mvn clean package -DskipTests'
-            }
-        }
-        stage('Test') {
-            steps {
-                sh 'mvn test'
-            }
-        }
-        stage('Build Image') {
-            steps {
-                script {
-                    def imageTag = "app:\${BUILD_NUMBER}"
-                    sh """
-                        docker build -t \${imageTag} .
-                        docker push \${imageTag}
-                    """
-                }
-            }
-        }
-    }
-}`;
-    } else if (lang === 'nodejs') {
-      return `pipeline {
-    agent {
-        kubernetes {
-            label 'node-builder'
-            defaultContainer 'node'
-        }
-    }
-    stages {
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
-        stage('Install') {
-            steps {
-                sh 'npm install'
-            }
-        }
-        stage('Build') {
-            steps {
-                sh 'npm run build'
-            }
-        }
-        stage('Test') {
-            steps {
-                sh 'npm test'
-            }
-        }
-        stage('Build Image') {
-            steps {
-                script {
-                    def imageTag = "app:\${BUILD_NUMBER}"
-                    sh """
-                        docker build -t \${imageTag} .
-                        docker push \${imageTag}
-                    """
-                }
-            }
-        }
-    }
-}`;
-    } else if (lang === 'python') {
-      return `pipeline {
-    agent {
-        kubernetes {
-            label 'python-builder'
-            defaultContainer 'python'
-        }
-    }
-    stages {
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
-        stage('Install') {
-            steps {
-                sh 'pip install -r requirements.txt'
-            }
-        }
-        stage('Test') {
-            steps {
-                sh 'pytest'
-            }
-        }
-        stage('Build Image') {
-            steps {
-                script {
-                    def imageTag = "app:\${BUILD_NUMBER}"
-                    sh """
-                        docker build -t \${imageTag} .
-                        docker push \${imageTag}
-                    """
-                }
-            }
-        }
-    }
-}`;
-    } else if (lang === 'go') {
-      return `pipeline {
-    agent {
-        kubernetes {
-            label 'go-builder'
-            defaultContainer 'golang'
-        }
-    }
-    stages {
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
-        stage('Build') {
-            steps {
-                sh 'go build -o app'
-            }
-        }
-        stage('Test') {
-            steps {
-                sh 'go test ./...'
-            }
-        }
-        stage('Build Image') {
-            steps {
-                script {
-                    def imageTag = "app:\${BUILD_NUMBER}"
-                    sh """
-                        docker build -t \${imageTag} .
-                        docker push \${imageTag}
-                    """
-                }
-            }
-        }
-    }
-}`;
-    } else if (lang === 'dotnet') {
-      return `pipeline {
-    agent {
-        kubernetes {
-            label 'dotnet-builder'
-            defaultContainer 'dotnet'
-        }
-    }
-    stages {
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
-        stage('Build') {
-            steps {
-                sh 'dotnet build'
-            }
-        }
-        stage('Test') {
-            steps {
-                sh 'dotnet test'
-            }
-        }
-        stage('Build Image') {
-            steps {
-                script {
-                    def imageTag = "app:\${BUILD_NUMBER}"
-                    sh """
-                        docker build -t \${imageTag} .
-                        docker push \${imageTag}
-                    """
-                }
-            }
-        }
-    }
-}`;
-    }
-  }
-  
-  // CD 模版
+function getDefaultContent(_language?: string): string {
+  const defaultEnv = getDefaultEnv();
   return `pipeline {
-    agent {
-        kubernetes {
-            label 'deployer'
-        }
+    agent any
+
+    environment {
+${defaultEnv.split('\n').map(l => `        ${l}`).join('\n')}
     }
+
     parameters {
-        choice(name: 'ENV', choices: ['dev', 'test', 'staging', 'production'], description: '部署环境')
-        string(name: 'IMAGE_TAG', description: '镜像标签')
+        string(name: 'PROJECT', defaultValue: '\${PROJECT_NAME}', description: '项目名称')
+        string(name: 'MODULE', defaultValue: '\${MODULE_NAME}', description: '模块名称')
+        string(name: 'APP', defaultValue: '\${APP_NAME}', description: '应用名称')
+        string(name: 'BRANCH', defaultValue: '\${BUILD_BRANCH}', description: '代码分支')
+        string(name: 'VERSION', defaultValue: '', description: '版本号（可选）')
+        choice(
+            name: 'ENVIRONMENT',
+            choices: ['dev', 'test', 'uat', 'prod'],
+            description: '发布环境（若选择，将覆盖分支自动判断）'
+        )
     }
+
     stages {
-        stage('Deploy') {
+        stage('Print Build Parameters') {
             steps {
-                sh '''
-                    echo "Deploying to \${ENV} with image \${IMAGE_TAG}"
-                    # kubectl apply -f k8s/\${ENV}/
-                '''
+                echo "PROJECT    : \${params.PROJECT}"
+                echo "MODULE     : \${params.MODULE}"
+                echo "APP        : \${params.APP}"
+                echo "BRANCH     : \${params.BRANCH}"
+                echo "VERSION    : \${params.VERSION ?: '自动生成'}"
+                echo "ENVIRONMENT: \${params.ENVIRONMENT}"
             }
         }
-        stage('Health Check') {
+
+        stage('Checkout') {
             steps {
-                sh '''
-                    echo "Checking health..."
-                    # kubectl rollout status deployment/app -n \${ENV}
-                '''
+                git branch: params.BRANCH,
+                    url: GIT_REPO,
+                    credentialsId: 'gitlab-http-credentials'
+            }
+        }
+
+        stage('Determine Version and Tag') {
+            steps {
+                script {
+                    if (!params.VERSION) {
+                        if (params.BRANCH == 'main' || params.BRANCH.startsWith('release/')) {
+                            def versionFile = readFile('VERSION').trim()
+                            currentBuild.displayName = "\${versionFile}"
+                            env.VERSION = versionFile
+                        } else {
+                            env.VERSION = "test-\${env.BUILD_ID}"
+                        }
+                    } else {
+                        env.VERSION = params.VERSION
+                    }
+
+                    if (params.ENVIRONMENT) {
+                        env.TAG_SUFFIX = params.ENVIRONMENT
+                    } else {
+                        if (params.BRANCH == 'develop' || params.BRANCH.startsWith('feature/')) {
+                            env.TAG_SUFFIX = 'test'
+                        } else if (params.BRANCH == 'main' || params.BRANCH.startsWith('release/')) {
+                            env.TAG_SUFFIX = 'uat'
+                        } else if (params.BRANCH.startsWith('hotfix/')) {
+                            env.TAG_SUFFIX = 'uat'
+                        } else {
+                            env.TAG_SUFFIX = 'test'
+                        }
+                    }
+
+                    env.FULL_TAG = "\${env.VERSION}-\${env.TAG_SUFFIX}"
+                    env.IMAGE = "\${IMAGE_BASE}:\${env.FULL_TAG}"
+
+                    echo "构建标签: \${env.FULL_TAG}"
+                    echo "镜像全名: \${env.IMAGE}"
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                script {
+                    if ('\${CODE_SUBPATH}') {
+                        dir('\${CODE_SUBPATH}') {
+                            sh '\${BUILD_COMMAND}'
+                        }
+                    } else {
+                        sh '\${BUILD_COMMAND}'
+                    }
+                }
+            }
+        }
+
+        stage('Build Image') {
+            steps {
+                script {
+                    def imageTag = "\${APP_CODE}:\${BUILD_NUMBER}"
+                    if ('\${CODE_SUBPATH}') {
+                        dir('\${CODE_SUBPATH}') {
+                            sh "docker build -f \${DOCKERFILE_PATH} -t \${imageTag} --build-arg MODULE=\${params.MODULE} ."
+                        }
+                    } else {
+                        sh "docker build -f \${DOCKERFILE_PATH} -t \${imageTag} --build-arg MODULE=\${params.MODULE} ."
+                    }
+                }
+            }
+        }
+
+        stage('Push to Harbor') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'harbor-credentials',
+                    passwordVariable: 'HARBOR_PASS',
+                    usernameVariable: 'HARBOR_USER'
+                )]) {
+                    sh """
+                        docker login \${DOCKER_REGISTRY} -u \${HARBOR_USER} -p \${HARBOR_PASS}
+                        docker push \${IMAGE}
+                        docker logout \${DOCKER_REGISTRY}
+                    """
+                }
             }
         }
     }
@@ -277,47 +217,28 @@ const [Modal, modalApi] = useVbenModal({
     if (isOpen) {
       const data = modalApi.getData<PipelineTemplateApi.Template>();
       if (data?.id) {
-        // 编辑模式：只显示基本信息，重新设置 schema
+        // 编辑模式
         formData.value = data;
         await loadData(data.id);
         
-        // 重新设置为编辑模式的 schema（不包含版本字段）
         formApi.setSchema(useSchema(true));
-        
-        // 编辑模式下禁用模板编码和模板类型（这些字段不可修改，版本管理在版本管理页面）
         formApi.updateSchema([
-          {
-            fieldName: 'code',
-            componentProps: { disabled: true },
-          },
-          {
-            fieldName: 'template_type',
-            componentProps: { disabled: true },
-          },
+          { fieldName: 'code', componentProps: { disabled: true } },
         ]);
       } else {
-        // 创建模式：显示版本字段
+        // 创建模式
         formData.value = undefined;
         
-        // 重新设置为创建模式的 schema（包含版本字段）
         formApi.setSchema(useSchema(false));
+        formApi.updateSchema([
+          { fieldName: 'code', componentProps: { disabled: false } },
+        ]);
         
         const defaultContent = getDefaultContent();
-        // 创建模式下启用所有字段
-        formApi.updateSchema([
-          {
-            fieldName: 'code',
-            componentProps: { disabled: false },
-          },
-          {
-            fieldName: 'template_type',
-            componentProps: { disabled: false },
-          },
-        ]);
+        const { environment, content } = extractEnvironment(defaultContent);
         formApi.setValues({
           name: '',
           code: '',
-          template_type: 'ci',
           language: 'java',
           language_version: '',
           framework: '',
@@ -325,7 +246,8 @@ const [Modal, modalApi] = useVbenModal({
           is_official: false,
           status: 1,
           version: '1.0.0',
-          content: defaultContent,
+          environment,
+          content,
           change_log: '初始版本',
           is_latest: true,
         });
@@ -346,10 +268,11 @@ async function loadData(id: number) {
 
 async function handleSubmit() {
   const values = await formApi.getValues();
+  const fullContent = mergeEnvironment(values.environment || '', values.content || '');
   if (isEdit.value) {
     modalApi.lock();
     try {
-      await updateTemplate(formData.value!.id!, values);
+      await updateTemplate(formData.value!.id!, { ...values, content: fullContent });
       message.success('更新成功');
       modalApi.close();
       emit('success');
@@ -364,7 +287,6 @@ async function handleSubmit() {
       const template = await createTemplate({
         name: values.name,
         code: values.code,
-        template_type: values.template_type,
         language: values.language,
         language_version: values.language_version,
         framework: values.framework,
@@ -374,11 +296,11 @@ async function handleSubmit() {
       });
       message.success('模板创建成功');
 
-      if (values.version && values.content) {
+      if (values.version && fullContent) {
         await createTemplateVersion(template.id, {
           template: template.id,
           version: values.version,
-          content: values.content,
+          content: fullContent,
           change_log: values.change_log || '初始版本',
           is_latest: values.is_latest,
         });

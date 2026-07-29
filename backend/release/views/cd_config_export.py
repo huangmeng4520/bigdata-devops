@@ -9,20 +9,27 @@ from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from utils.custom_model_viewSet import CustomModelViewSet
+from utils.data_permission import DataPermissionMixin
+from utils.permissions import HasMutateButtonPermission
 from ..models import CDConfigExport, ApplicationPipelineConfig, ApplicationPipelineVersion, Application
 from ..serializers import CDConfigExportSerializer, CDConfigExportCreateSerializer
 from ..filters import CDConfigExportFilter
 
 
-class CDConfigExportViewSet(CustomModelViewSet):
+class CDConfigExportViewSet(DataPermissionMixin, CustomModelViewSet):
     """CD配置导出管理"""
     queryset = CDConfigExport.objects.all()
     serializer_class = CDConfigExportSerializer
+    permission_classes = [HasMutateButtonPermission]
     filter_backends = [DjangoFilterBackend]
     filterset_class = CDConfigExportFilter
     search_fields = ["application__name", "application__code"]
     ordering_fields = ["create_time"]
     enable_soft_delete = True
+
+    # 数据权限：按所属应用→项目级联隔离
+    scope_type = 'project'
+    scope_field = 'application__project_id'
 
     action_serializers = {
         "create": CDConfigExportCreateSerializer,
@@ -32,11 +39,20 @@ class CDConfigExportViewSet(CustomModelViewSet):
         queryset = super().get_queryset()
         if self.enable_soft_delete:
             queryset = queryset.filter(is_deleted=False)
-        return queryset.select_related('application')
+        queryset = queryset.select_related('application')
+        return self.data_permission_filter(queryset)
 
     def perform_create(self, serializer):
         """创建时自动设置创建人"""
         serializer.save(exported_by=self.request.user.username)
+
+    def perform_update(self, serializer):
+        self.check_object_data_permission(serializer.instance)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self.check_object_data_permission(instance)
+        super().perform_destroy(instance)
 
     @action(detail=True, methods=['post'])
     def download(self, request, pk=None):
@@ -96,11 +112,10 @@ def generate_jenkinsfile_cd(application: Application, environment: str, config_v
     try:
         config = ApplicationPipelineConfig.objects.get(
             application=application,
-            config_type='cd',
             environment=environment
         )
     except ApplicationPipelineConfig.DoesNotExist:
-        raise ValueError(f"应用 {application.name} 未配置 {environment} 环境的 CD 配置")
+        raise ValueError(f"应用 {application.name} 未配置 {environment} 环境的 Pipeline 配置")
     
     # 获取版本
     if config_version:
@@ -205,11 +220,10 @@ def generate_deploy_config(application: Application, environment: str, config_ve
     try:
         config = ApplicationPipelineConfig.objects.get(
             application=application,
-            config_type='cd',
             environment=environment
         )
     except ApplicationPipelineConfig.DoesNotExist:
-        raise ValueError(f"应用未配置 {environment} 环境的 CD 配置")
+        raise ValueError(f"应用未配置 {environment} 环境的 Pipeline 配置")
     
     # 合并变量
     variables = config.variables or {}
@@ -241,9 +255,7 @@ def generate_deploy_config(application: Application, environment: str, config_ve
             "image_name": application.code
         },
         "jenkins": {
-            "ci_job": application.jenkins_ci_job,
-            "cd_job": application.jenkins_cd_job,
-            "folder": f"{project.code}/{module.code}"
+            "folder": f"{project.code}/{module.code}/{application.code}"
         },
         "variables": variables,
         "stages_config": stages_config
