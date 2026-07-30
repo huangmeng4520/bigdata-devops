@@ -15,7 +15,6 @@ from ..serializers import (
     ConfigPackageSerializer, SyncLogSerializer
 )
 from ..filters import ApplicationFilter
-from ..services import GitLabService, DevOpsException
 from ..tasks import (
     create_gitlab_resources, create_jenkins_resources, create_harbor_resources,
     generate_config_package, sync_application_jenkins
@@ -76,114 +75,6 @@ class ApplicationViewSet(DataPermissionMixin, CustomModelViewSet):
         """删除前校验数据权限"""
         self.check_object_data_permission(instance)
         super().perform_destroy(instance)
-
-    def _create_resources(self, app: Application):
-        """
-        创建应用相关资源（包含 GitLab，已废弃）
-
-        1. GitLab Project (同步创建，获取 git_url)
-        2. Jenkins CI/CD Jobs (异步)
-        3. Harbor Project (异步)
-
-        Args:
-            app: Application 实例
-        """
-        # 检查模块是否有 GitLab Subgroup ID
-        if not app.module.gitlab_subgroup_id:
-            logger.warning(f"应用 {app.name} 所属模块没有 GitLab Subgroup ID，跳过资源创建")
-            SyncLog.objects.create(
-                project=app.project,
-                module=app.module,
-                app=app,
-                sync_type="gitlab",
-                resource_name=app.code,
-                action="create",
-                status=0,
-                message="所属模块没有 GitLab Subgroup ID"
-            )
-            return
-
-        # 1. 同步创建 GitLab Project
-        gitlab_project_id = self._create_gitlab_project(app)
-
-        if not gitlab_project_id:
-            logger.error(f"应用 {app.name} GitLab Project 创建失败，跳过后续资源创建")
-            return
-
-        # 2. 异步创建 Jenkins 和 Harbor 资源
-        self._create_jenkins_and_harbor(app)
-
-    def _create_gitlab_project(self, app: Application) -> int:
-        """
-        创建 GitLab Project
-
-        Args:
-            app: Application 实例
-
-        Returns:
-            GitLab Project ID 或 None
-        """
-        from django.utils import timezone
-
-        try:
-            app.gitlab_sync_status = 1
-            app.save(update_fields=['gitlab_sync_status'])
-
-            gitlab = GitLabService()
-            result = gitlab.create_project(
-                name=app.name,
-                path=app.code,
-                namespace_id=app.module.gitlab_subgroup_id,
-                description=app.description
-            )
-
-            app.gitlab_project_id = result.get("id")
-            app.git_url = result.get("ssh_url_to_repo") or result.get("http_url_to_repo")
-            app.gitlab_sync_status = 2
-            app.gitlab_sync_time = timezone.now()
-            app.gitlab_sync_message = "创建成功"
-            app.save(update_fields=["gitlab_project_id", "git_url", "gitlab_sync_status", "gitlab_sync_time", "gitlab_sync_message"])
-
-            SyncLog.objects.create(
-                project=app.project,
-                module=app.module,
-                app=app,
-                sync_type="gitlab",
-                resource_name=result.get("path_with_namespace", app.code),
-                action="create",
-                status=1,
-                message=f"创建 GitLab Project 成功: {result.get('web_url', '')}"
-            )
-
-            logger.info(f"应用 {app.name} GitLab Project 创建成功: {result.get('id')}")
-            return result.get("id")
-
-        except DevOpsException as e:
-            logger.error(f"应用 {app.name} GitLab Project 创建失败: {e.message}")
-            app.gitlab_sync_status = 3
-            app.gitlab_sync_message = e.message
-            app.save(update_fields=['gitlab_sync_status', 'gitlab_sync_message'])
-            SyncLog.objects.create(
-                project=app.project,
-                module=app.module,
-                app=app,
-                sync_type="gitlab",
-                resource_name=app.code,
-                action="create",
-                status=0,
-                message=e.message
-            )
-            return None
-        except Exception as e:
-            logger.exception(f"应用 {app.name} GitLab Project 创建异常: {e}")
-            app.gitlab_sync_status = 3
-            app.gitlab_sync_message = str(e)[:512]
-            app.save(update_fields=['gitlab_sync_status', 'gitlab_sync_message'])
-            return None
-
-    def perform_update(self, serializer):
-        """更新时自动设置修改人"""
-        serializer.save(modifier=self.request.user.username)
 
     @action(detail=True, methods=["get"])
     def config_packages(self, request, pk=None):
@@ -278,32 +169,6 @@ class ApplicationViewSet(DataPermissionMixin, CustomModelViewSet):
         return Response({
             "code": 0,
             "message": "GitLab 同步任务已提交",
-            "data": {"task_id": task.id}
-        })
-
-    @action(detail=True, methods=["post"])
-    def sync_jenkins(self, request, pk=None):
-        """手动同步 Jenkins 资源"""
-        app = self.get_object()
-        force = request.data.get("force", False)
-
-        if not app.git_url:
-            return Response({
-                "code": 1,
-                "message": "应用没有 Git 仓库地址，无法创建 Jenkins Job"
-            }, status=400)
-
-        if app.jenkins_sync_status == 2 and not force:
-            return Response({
-                "code": 1,
-                "message": "Jenkins 资源已同步，如需重新创建请使用 force=true"
-            }, status=400)
-
-        task = create_jenkins_resources.delay(app.id, force)
-
-        return Response({
-            "code": 0,
-            "message": "Jenkins 同步任务已提交",
             "data": {"task_id": task.id}
         })
 

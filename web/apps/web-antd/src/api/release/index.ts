@@ -5,7 +5,7 @@ export * from './pipelineTemplate';
 export * from './environmentStrategy';
 export * from './deployment';
 
-// applicationPipeline 和 application 都有 syncToJenkins，显式导出避免冲突
+// applicationPipeline 与 application 各自维护独立的同步函数，命名区分避免混淆
 export {
   ENVIRONMENT_OPTIONS,
   createConfig,
@@ -19,7 +19,7 @@ export {
   getSyncStatus,
   getVersionContent,
   rollbackConfig,
-  syncToJenkins as syncPipelineConfigToJenkins,
+  syncConfigToJenkins,
   updateConfig,
   validateNaming,
 } from './applicationPipeline';

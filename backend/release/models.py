@@ -135,6 +135,8 @@ class Application(CoreModel):
         (1, "同步中"),
         (2, "已同步"),
         (3, "同步失败"),
+        (4, "待重新同步"),
+        (5, "未配置"),
     ]
 
     GITLAB_SYNC_STATUS_CHOICES = [
@@ -230,6 +232,37 @@ class Application(CoreModel):
 
     def __str__(self):
         return f"{self.project.name}/{self.module.name}/{self.name}"
+
+    def refresh_jenkins_sync_status(self):
+        """根据各环境流水线配置状态聚合应用级 Jenkins 同步状态（派生状态）"""
+        configs = self.pipeline_configs.filter(is_active=True, is_deleted=False)
+        if not configs.exists():
+            new_status, message = 5, "未配置流水线"
+        else:
+            statuses = list(configs.values_list('jenkins_sync_status', flat=True))
+            dirty = configs.filter(config_dirty=True).exists()
+            if any(s == 1 for s in statuses):
+                new_status, message = 1, "同步中"
+            elif any(s == 3 for s in statuses):
+                new_status, message = 3, "部分环境同步失败"
+            elif dirty or any(s == 0 for s in statuses):
+                new_status, message = 4, "有环境待重新同步"
+            else:
+                new_status, message = 2, "全部环境已同步"
+
+            detail = []
+            for c in configs:
+                if c.jenkins_sync_status == 2 and c.config_dirty:
+                    detail.append(f"{c.get_environment_display()}:待重新同步")
+                else:
+                    detail.append(f"{c.get_environment_display()}:{c.get_jenkins_sync_status_display()}")
+            if detail:
+                message = f"{message}（{'；'.join(detail)}）"
+
+        if self.jenkins_sync_status != new_status or self.jenkins_sync_message != message:
+            self.jenkins_sync_status = new_status
+            self.jenkins_sync_message = message
+            self.save(update_fields=['jenkins_sync_status', 'jenkins_sync_message'])
 
 
 class ConfigPackage(CoreModel):
@@ -429,6 +462,7 @@ class ApplicationPipelineConfig(CoreModel):
     jenkins_sync_time = models.DateTimeField(null=True, blank=True, verbose_name="最后同步时间")
     jenkins_sync_message = models.CharField(max_length=512, null=True, blank=True, verbose_name="同步消息")
     jenkins_job_name = models.CharField(max_length=256, null=True, blank=True, verbose_name="Jenkins Job 名称")
+    config_dirty = models.BooleanField(default=False, verbose_name="配置已变更待同步")
 
     class Meta:
         db_table = "release_application_pipeline_config"

@@ -183,13 +183,6 @@ async function syncGitlab(id: number, force?: boolean) {
 }
 
 /**
- * 单独同步 Jenkins 资源
- */
-async function syncJenkins(id: number, force?: boolean) {
-  return requestClient.post(`/release/application/${id}/sync_jenkins/`, { force: force || false });
-}
-
-/**
  * 单独同步 Harbor 资源
  */
 async function syncHarbor(id: number, force?: boolean) {
@@ -206,7 +199,7 @@ async function getResourceStatus(id: number) {
 /**
  * 同步 CI/CD 配置到 Jenkins
  */
-async function syncToJenkins(id: number) {
+async function syncApplicationToJenkins(id: number) {
   return requestClient.post<{ task_id: string; message: string }>(`/release/application/${id}/sync_to_jenkins/`);
 }
 
@@ -239,8 +232,7 @@ export {
   previewJenkinsfile,
   syncGitlab,
   syncHarbor,
-  syncJenkins,
   syncResources,
-  syncToJenkins,
+  syncApplicationToJenkins,
   updateApplication,
 };

@@ -30,7 +30,7 @@ import {
   getSyncStatus,
   generateJenkinsfile,
   generateAndSync,
-  syncToJenkins as syncPipelineConfigToJenkins,
+  syncConfigToJenkins,
   getConfigVersions,
   createConfig,
 } from '#/api/release';
@@ -105,6 +105,10 @@ async function loadTemplates() {
 }
 
 function getSyncTag(config: ApplicationPipelineApi.Config) {
+  // 已同步但配置已变更未重新同步 -> 待重新同步（橙色）
+  if (config.jenkins_sync_status === 2 && config.config_dirty) {
+    return { color: 'orange', text: '待重新同步' };
+  }
   const color = SYNC_STATUS_COLORS[config.jenkins_sync_status] || 'default';
   const text = config.jenkins_sync_status_display || SYNC_STATUS_TEXT[config.jenkins_sync_status] || '未知';
   return { color, text };
@@ -260,7 +264,7 @@ async function handleSync() {
   if (!drawerConfig.value) return;
   drawerSyncing.value = true;
   try {
-    const result = await syncPipelineConfigToJenkins(drawerConfig.value.id);
+    const result = await syncConfigToJenkins(drawerConfig.value.id);
     message.success(result.message || '同步任务已提交');
     pollSyncStatus(drawerConfig.value.id);
   } catch {
@@ -295,6 +299,7 @@ async function pollSyncStatus(configId: number, maxAttempts = 10) {
         config.jenkins_sync_time = status.sync_time;
         config.jenkins_sync_message = status.sync_message;
         config.jenkins_job_name = status.jenkins_job_name;
+        config.config_dirty = status.config_dirty;
       }
       if (status.sync_status === 1) {
         attempts++;

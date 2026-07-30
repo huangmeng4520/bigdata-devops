@@ -94,6 +94,22 @@ class ApplicationSerializer(serializers.ModelSerializer):
     harbor_sync_status_display = serializers.CharField(source="get_harbor_sync_status_display", read_only=True)
     code_repository_name = serializers.CharField(source="code_repository.name", read_only=True)
     code_repository_git_url = serializers.CharField(source="code_repository.git_url", read_only=True)
+    pipeline_sync_summary = serializers.SerializerMethodField(read_only=True)
+
+    def get_pipeline_sync_summary(self, obj):
+        """各环境流水线配置同步状态明细，供前端展示聚合状态与 Tooltip"""
+        configs = obj.pipeline_configs.filter(is_active=True, is_deleted=False)
+        return [
+            {
+                'environment': c.environment,
+                'environment_display': c.get_environment_display(),
+                'jenkins_sync_status': c.jenkins_sync_status,
+                'jenkins_sync_status_display': c.get_jenkins_sync_status_display(),
+                'config_dirty': c.config_dirty,
+                'jenkins_job_name': c.jenkins_job_name,
+            }
+            for c in configs
+        ]
 
     class Meta:
         model = Application

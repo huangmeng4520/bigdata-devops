@@ -469,53 +469,53 @@ def sync_application_jenkins(self, app_id: int):
         logger.error(f"[Celery] 应用不存在: app_id={app_id}")
         return {"success": False, "error": "应用不存在"}
 
-    app.jenkins_sync_status = 1
-    app.save(update_fields=['jenkins_sync_status'])
-
     configs = ApplicationPipelineConfig.objects.filter(
         application=app, is_active=True, is_deleted=False,
         template__isnull=False
-    ).select_related('template', 'environment_strategy')
+    ).select_related('template', 'template_version', 'application')
+
+    if not configs.exists():
+        # 无启用流水线配置，应用级状态由聚合得出（应为“未配置”）
+        app.refresh_jenkins_sync_status()
+        return {"success": True, "results": [], "message": "无启用的流水线配置，无需同步"}
+
+    module_code = app.module.code if app.module else app.code
+    folder = f"{app.project.code}/{module_code}/{app.code}"
+
+    # 批量开始：各环境先置为同步中，应用级状态由聚合逻辑派生
+    ApplicationPipelineConfig.objects.filter(
+        pk__in=list(configs.values_list('id', flat=True))
+    ).update(jenkins_sync_status=1)
+    app.refresh_jenkins_sync_status()
 
     results = []
 
     try:
         jenkins = JenkinsService()
-        module_code = app.module.code if app.module else app.code
-        folder = f"{app.project.code}/{module_code}/{app.code}"
 
         for config in configs:
             result = _sync_pipeline_config(jenkins, app, config, folder)
             results.append(result)
 
+        # 每条 config 保存时已触发聚合；这里再确保最终状态正确
+        app.refresh_jenkins_sync_status()
         all_success = all(r.get("success") for r in results)
-
-        with transaction.atomic():
-            app.jenkins_sync_status = 2 if all_success else 3
-            app.jenkins_sync_time = timezone.now()
-            app.jenkins_sync_message = "同步成功" if all_success else "部分同步失败"
-            app.save(update_fields=['jenkins_sync_status', 'jenkins_sync_time', 'jenkins_sync_message'])
-
         logger.info(f"[Celery] 应用 Pipeline 配置同步完成: app_id={app_id}, results={results}")
         return {"success": all_success, "results": results}
 
     except DevOpsException as e:
         logger.error(f"[Celery] Pipeline 配置同步失败: {e.message}")
-        app.jenkins_sync_status = 3
-        app.jenkins_sync_message = e.message
-        app.save(update_fields=['jenkins_sync_status', 'jenkins_sync_message'])
         SyncLog.objects.create(
             app=app, project=app.project, module=app.module,
             sync_type="jenkins",
-            resource_name=f"{app.project.code}/{module_code}/{app.code}",
+            resource_name=folder,
             action="update", status=0, message=e.message
         )
+        app.refresh_jenkins_sync_status()
         raise self.retry(exc=e)
     except Exception as e:
         logger.exception(f"[Celery] Pipeline 配置同步异常: {e}")
-        app.jenkins_sync_status = 3
-        app.jenkins_sync_message = str(e)[:512]
-        app.save(update_fields=['jenkins_sync_status', 'jenkins_sync_message'])
+        app.refresh_jenkins_sync_status()
         return {"success": False, "error": str(e)}
 
 
@@ -563,12 +563,12 @@ def sync_jenkins_config(self, config_id):
 
         if success:
             full_job_name = f"{folder}/{env_code}"
-            ApplicationPipelineConfig.objects.filter(pk=config.pk).update(
-                jenkins_job_name=full_job_name,
-                jenkins_sync_status=2,
-                jenkins_sync_time=timezone.now(),
-                jenkins_sync_message="同步成功"
-            )
+            config.jenkins_job_name = full_job_name
+            config.jenkins_sync_status = 2
+            config.jenkins_sync_time = timezone.now()
+            config.jenkins_sync_message = "同步成功"
+            config.config_dirty = False
+            config.save()
             return {"success": True, "job_name": full_job_name}
         else:
             ApplicationPipelineConfig.objects.filter(pk=config.pk).update(
@@ -578,23 +578,22 @@ def sync_jenkins_config(self, config_id):
             return {"success": False, "error": "更新 Jenkins Job 失败"}
     except DevOpsException as e:
         logger.error(f"[Celery] Pipeline 同步失败: config_id={config_id}, error={e.message}")
-        ApplicationPipelineConfig.objects.filter(pk=config.pk).update(
-            jenkins_sync_status=3,
-            jenkins_sync_message=e.message
-        )
+        config.jenkins_sync_status = 3
+        config.jenkins_sync_message = e.message
+        config.save()
         raise self.retry(exc=e)
     except Exception as e:
         logger.exception(f"[Celery] Pipeline 同步异常: config_id={config_id}")
-        ApplicationPipelineConfig.objects.filter(pk=config.pk).update(
-            jenkins_sync_status=3,
-            jenkins_sync_message=str(e)[:512]
-        )
+        config.jenkins_sync_status = 3
+        config.jenkins_sync_message = str(e)[:512]
+        config.save()
         return {"success": False, "error": str(e)}
 
 
 def _sync_pipeline_config(jenkins, app, config, folder):
     """同步单个 Pipeline 配置到 Jenkins（被 sync_application_jenkins 调用）"""
-    from .models import SyncLog, ApplicationPipelineVersion
+    from django.utils import timezone
+    from .models import SyncLog, ApplicationPipelineConfig, ApplicationPipelineVersion
     from .pipeline_utils import get_template_content, build_pipeline_variables
 
     latest_version = ApplicationPipelineVersion.objects.filter(config=config).order_by('-version').first()
@@ -625,9 +624,12 @@ def _sync_pipeline_config(jenkins, app, config, folder):
 
     if success:
         full_job_name = f"{job_folder}/{job_name}"
-        ApplicationPipelineConfig.objects.filter(pk=config.pk).update(
-            jenkins_job_name=full_job_name
-        )
+        config.jenkins_job_name = full_job_name
+        config.jenkins_sync_status = 2
+        config.jenkins_sync_time = timezone.now()
+        config.jenkins_sync_message = "同步成功"
+        config.config_dirty = False
+        config.save()
         SyncLog.objects.create(
             app=app, project=app.project, module=app.module,
             sync_type="jenkins",
@@ -637,6 +639,9 @@ def _sync_pipeline_config(jenkins, app, config, folder):
         )
         return {"success": True, "job_name": full_job_name}
     else:
+        config.jenkins_sync_status = 3
+        config.jenkins_sync_message = "更新 Jenkins Job 失败"
+        config.save()
         return {"success": False, "error": "更新 Jenkins Job 失败"}
 
 

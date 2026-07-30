@@ -31,7 +31,7 @@ STANDARD = ['query', 'create', 'edit', 'delete']
 # 各模型的自定义动作（对应视图集中的 @action）
 CUSTOM = {
     'application': ['release', 'sync-jenkins', 'sync-gitlab',
-                    'sync-jenkins-resource', 'sync-harbor'],
+                    'sync-harbor'],
     'code_repository': ['import', 'sync-gitlab'],
     'project': ['sync-gitlab'],
     'module': ['import', 'sync-gitlab'],

@@ -82,7 +82,8 @@ class ApplicationPipelineConfigViewSet(DataPermissionMixin, CustomModelViewSet):
         new_version = instance.current_version + 1
         serializer.save(
             modifier=self.request.user.username,
-            current_version=new_version
+            current_version=new_version,
+            config_dirty=True,
         )
 
     @action(detail=True, methods=['get'])
@@ -128,6 +129,7 @@ class ApplicationPipelineConfigViewSet(DataPermissionMixin, CustomModelViewSet):
         )
 
         config.current_version = new_version
+        config.config_dirty = True
         config.save()
 
         return Response({
@@ -157,6 +159,7 @@ class ApplicationPipelineConfigViewSet(DataPermissionMixin, CustomModelViewSet):
         # 恢复配置
         config.variables = version.variables_snapshot
         config.stages_config = version.stages_snapshot
+        config.config_dirty = True
         config.save(modifier=request.user.username)
 
         return Response({
@@ -206,7 +209,8 @@ class ApplicationPipelineConfigViewSet(DataPermissionMixin, CustomModelViewSet):
                 'sync_status_display': config.get_jenkins_sync_status_display(),
                 'sync_time': config.jenkins_sync_time,
                 'sync_message': config.jenkins_sync_message,
-                'jenkins_job_name': config.jenkins_job_name
+                'jenkins_job_name': config.jenkins_job_name,
+                'config_dirty': config.config_dirty
             }
         })
 
@@ -245,7 +249,8 @@ class ApplicationPipelineConfigViewSet(DataPermissionMixin, CustomModelViewSet):
 
         config.current_version = new_version
         config.jenkins_sync_status = 0
-        config.save(update_fields=['current_version', 'jenkins_sync_status'])
+        config.config_dirty = True
+        config.save(update_fields=['current_version', 'jenkins_sync_status', 'config_dirty'])
 
         task = sync_jenkins_config.delay(config.id)
 

@@ -133,7 +133,7 @@ async function rollbackConfig(id: number, targetVersion: number) {
 /**
  * 同步配置到 Jenkins
  */
-async function syncToJenkins(id: number) {
+async function syncConfigToJenkins(id: number) {
   return requestClient.post<{ task_id: string; message: string }>(`/release/application-pipeline-configs/${id}/sync_to_jenkins/`);
 }
 
@@ -212,7 +212,7 @@ export {
   getSyncStatus,
   getVersionContent,
   rollbackConfig,
-  syncToJenkins,
+  syncConfigToJenkins,
   updateConfig,
   validateNaming,
 };

@@ -22,8 +22,7 @@ import {
   getModuleList,
   getProjectList,
   syncHarbor,
-  syncJenkins,
-  syncToJenkins,
+  syncApplicationToJenkins,
 } from '#/api/release';
 import { $t } from '#/locales';
 import { hasPermission } from '#/utils/permission';
@@ -150,28 +149,6 @@ function onDelete(row: ReleaseApplicationApi.Application) {
 }
 
 /**
- * 同步 Jenkins 资源（创建 Job）
- */
-function onSyncJenkinsResource(row: ReleaseApplicationApi.Application) {
-  const hideLoading = message.loading({
-    content: `正在同步 ${row.name} 的 Jenkins 资源...`,
-    duration: 0,
-    key: 'action_process_msg',
-  });
-  syncJenkins(row.id, false)
-    .then(() => {
-      message.success({
-        content: `${row.name} 的 Jenkins 同步任务已提交`,
-        key: 'action_process_msg',
-      });
-      refreshGrid();
-    })
-    .catch(() => {
-      hideLoading();
-    });
-}
-
-/**
  * 同步 Harbor
  */
 function onSyncHarbor(row: ReleaseApplicationApi.Application) {
@@ -202,7 +179,7 @@ function onSyncJenkins(row: ReleaseApplicationApi.Application) {
     duration: 0,
     key: 'action_process_msg',
   });
-  syncToJenkins(row.id)
+  syncApplicationToJenkins(row.id)
     .then((res) => {
       hideLoading();
       message.success({
@@ -230,10 +207,6 @@ function onActionClick({
     }
     case 'edit': {
       onEdit(row);
-      break;
-    }
-    case 'sync-jenkins-resource': {
-      onSyncJenkinsResource(row);
       break;
     }
     case 'sync-harbor': {
@@ -318,12 +291,14 @@ function refreshGrid() {
   gridApi.query();
 }
 
-// Jenkins 同步状态颜色
+// Jenkins 同步状态颜色（应用级：0待同步/1同步中/2已同步/3同步失败/4待重新同步/5未配置）
 const SYNC_STATUS_COLORS: Record<number, string> = {
   0: 'default',
   1: 'processing',
   2: 'success',
   3: 'error',
+  4: 'orange',
+  5: 'default',
 };
 
 const SYNC_STATUS_TEXT: Record<number, string> = {
@@ -331,6 +306,8 @@ const SYNC_STATUS_TEXT: Record<number, string> = {
   1: '同步中',
   2: '已同步',
   3: '同步失败',
+  4: '待重新同步',
+  5: '未配置',
 };
 
 // Harbor 同步状态颜色
@@ -371,7 +348,15 @@ const HARBOR_SYNC_STATUS_TEXT: Record<number, string> = {
 
       <!-- Jenkins 同步状态 -->
       <template #jenkins_sync="{ row }">
-        <Tooltip :title="row.jenkins_sync_message || SYNC_STATUS_TEXT[row.jenkins_sync_status]">
+        <Tooltip>
+          <template #title>
+            <div v-if="row.pipeline_sync_summary && row.pipeline_sync_summary.length">
+              <div v-for="s in row.pipeline_sync_summary" :key="s.environment">
+                {{ s.environment_display }}：{{ s.config_dirty ? '待重新同步' : s.jenkins_sync_status_display }}
+              </div>
+            </div>
+            <div v-else>未配置流水线</div>
+          </template>
           <Tag :color="SYNC_STATUS_COLORS[row.jenkins_sync_status]">
             {{ SYNC_STATUS_TEXT[row.jenkins_sync_status] }}
           </Tag>
@@ -405,12 +390,11 @@ const HARBOR_SYNC_STATUS_TEXT: Record<number, string> = {
             type="primary" size="small"
             @click="onActionClick({ code: 'pipeline-config', row })"
           >流水线配置</Button>
-          <Dropdown v-if="hasPermission('release:application:sync-jenkins') || hasPermission('release:application:sync-jenkins-resource') || hasPermission('release:application:sync-harbor')">
+          <Dropdown v-if="hasPermission('release:application:sync-jenkins') || hasPermission('release:application:sync-harbor')">
             <Button size="small">更多 ···</Button>
             <template #overlay>
               <Menu>
                 <MenuItem v-if="hasPermission('release:application:sync-jenkins')" key="sync-jenkins" @click="onActionClick({ code: 'sync-jenkins', row })">同步 Jenkins</MenuItem>
-                <MenuItem v-if="hasPermission('release:application:sync-jenkins-resource')" key="sync-jenkins-resource" @click="onActionClick({ code: 'sync-jenkins-resource', row })">创建 Job</MenuItem>
                 <MenuItem v-if="hasPermission('release:application:sync-harbor')" key="sync-harbor" @click="onActionClick({ code: 'sync-harbor', row })">Harbor</MenuItem>
               </Menu>
             </template>

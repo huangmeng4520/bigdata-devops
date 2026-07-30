@@ -35,7 +35,6 @@ class Command(BaseCommand):
             {'name': 'ApplicationRelease', 'title': '发布应用', 'auth_code': 'release:application:release', 'sort': 4},
             {'name': 'ApplicationSyncJenkins', 'title': '同步CI/CD', 'auth_code': 'release:application:sync-jenkins', 'sort': 5},
             {'name': 'ApplicationSyncGitlab', 'title': '同步GitLab', 'auth_code': 'release:application:sync-gitlab', 'sort': 6},
-            {'name': 'ApplicationSyncJenkinsResource', 'title': '同步Jenkins资源', 'auth_code': 'release:application:sync-jenkins-resource', 'sort': 7},
             {'name': 'ApplicationSyncHarbor', 'title': '同步Harbor', 'auth_code': 'release:application:sync-harbor', 'sort': 8},
         ]
 
