@@ -439,7 +439,7 @@ class ReleaseCreateSerializer(serializers.Serializer):
     """发布创建序列化器"""
     branch = serializers.CharField(max_length=128, help_text="代码分支")
     environment = serializers.CharField(max_length=32, help_text="目标环境")
-    version = serializers.CharField(max_length=64, required=False, allow_null=True, default=None, help_text="发布版本")
+    version = serializers.CharField(max_length=64, required=False, allow_null=True, allow_blank=True, default=None, help_text="发布版本")
     require_approval = serializers.BooleanField(default=False, help_text="需要审批")
     approval_type = serializers.CharField(max_length=32, required=False, allow_null=True, default=None, help_text="审批类型")
     approvers = serializers.ListField(

@@ -357,7 +357,7 @@ def trigger_release(request, app_id):
         application=application,
         branch=branch,
         environment=environment,
-        version=data.get('version'),
+        version=data.get('version') or None,
         require_approval=require_approval,
         approval_type=data.get('approval_type'),
         approvers=data.get('approvers', []),

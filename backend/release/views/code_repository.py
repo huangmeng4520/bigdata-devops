@@ -198,12 +198,12 @@ class CodeRepositoryViewSet(DataPermissionMixin, CustomModelViewSet):
 
         try:
             gitlab = GitLabService()
-            
+
             for item in import_data:
                 gitlab_project_id = item.get("gitlab_project_id")
                 project_id = item.get("project_id")
                 module_id = item.get("module_id")
-                
+
                 if not gitlab_project_id:
                     fail_count += 1
                     results.append({
@@ -212,7 +212,8 @@ class CodeRepositoryViewSet(DataPermissionMixin, CustomModelViewSet):
                         "message": "参数不完整"
                     })
                     continue
-                
+
+                # 已存在（未删除）则跳过
                 if gitlab_project_id in imported_ids:
                     fail_count += 1
                     results.append({
@@ -221,10 +222,10 @@ class CodeRepositoryViewSet(DataPermissionMixin, CustomModelViewSet):
                         "message": "已存在"
                     })
                     continue
-                
+
                 try:
                     from ..models import Project, Module
-                    
+
                     project_info = gitlab.get_project(gitlab_project_id)
                     if not project_info:
                         fail_count += 1
@@ -240,7 +241,7 @@ class CodeRepositoryViewSet(DataPermissionMixin, CustomModelViewSet):
                     module_obj = None
                     namespace = project_info.get("namespace", {})
                     full_path = namespace.get("full_path", "")
-                    
+
                     if full_path:
                         path_parts = full_path.split("/")
                         if len(path_parts) >= 1:
@@ -249,7 +250,7 @@ class CodeRepositoryViewSet(DataPermissionMixin, CustomModelViewSet):
                                 project_obj = Project.objects.get(code=project_path, is_deleted=False)
                             except Project.DoesNotExist:
                                 pass
-                            
+
                             if len(path_parts) >= 2:
                                 module_path = path_parts[1]
                                 if project_obj:
@@ -257,6 +258,29 @@ class CodeRepositoryViewSet(DataPermissionMixin, CustomModelViewSet):
                                         module_obj = Module.objects.get(project=project_obj, code=module_path, is_deleted=False)
                                     except Module.DoesNotExist:
                                         pass
+
+                    # 若曾被软删除，则恢复（取消删除并更新字段），而非新建重复记录
+                    deleted_repo = CodeRepository.objects.filter(
+                        gitlab_project_id=gitlab_project_id, is_deleted=True
+                    ).first()
+                    if deleted_repo:
+                        deleted_repo.is_deleted = False
+                        deleted_repo.name = project_info.get("name", deleted_repo.name)
+                        deleted_repo.code = project_info.get("path", deleted_repo.code)
+                        deleted_repo.git_url = project_info.get("ssh_url_to_repo", deleted_repo.git_url)
+                        deleted_repo.git_http_url = project_info.get("http_url_to_repo", deleted_repo.git_http_url)
+                        deleted_repo.project = project_obj
+                        deleted_repo.module = module_obj
+                        deleted_repo.repository_type = 'gitlab'
+                        deleted_repo.save()
+                        success_count += 1
+                        results.append({
+                            "gitlab_project_id": gitlab_project_id,
+                            "status": "restored",
+                            "id": deleted_repo.id,
+                            "name": deleted_repo.name
+                        })
+                        continue
 
                     repo = CodeRepository.objects.create(
                         name=project_info.get("name", ""),
@@ -316,25 +340,51 @@ class CodeRepositoryViewSet(DataPermissionMixin, CustomModelViewSet):
             if not project_info:
                 return Response({"code": 1, "message": "GitLab Project 不存在"})
 
-            if CodeRepository.objects.filter(gitlab_project_id=gitlab_project_id, is_deleted=False).exists():
-                return Response({"code": 1, "message": "该 GitLab Project 已导入"})
-
+            # 先解析项目/模块，供恢复与新建复用
             from ..models import Project, Module
-            
+
             project_obj = None
             module_obj = None
-            
+
             if project_id:
                 try:
                     project_obj = Project.objects.get(id=project_id, is_deleted=False)
                 except Project.DoesNotExist:
                     return Response({"code": 1, "message": "项目不存在"})
-            
+
             if module_id:
                 try:
                     module_obj = Module.objects.get(id=module_id, is_deleted=False)
                 except Module.DoesNotExist:
                     return Response({"code": 1, "message": "模块不存在"})
+
+            # 已存在且未删除
+            if CodeRepository.objects.filter(gitlab_project_id=gitlab_project_id, is_deleted=False).exists():
+                return Response({"code": 1, "message": "该 GitLab Project 已导入"})
+
+            # 若曾被软删除，恢复之（取消删除并更新字段）
+            deleted_repo = CodeRepository.objects.filter(
+                gitlab_project_id=gitlab_project_id, is_deleted=True
+            ).first()
+            if deleted_repo:
+                deleted_repo.is_deleted = False
+                deleted_repo.name = project_info.get("name", deleted_repo.name)
+                deleted_repo.code = project_info.get("path", deleted_repo.code)
+                deleted_repo.git_url = project_info.get("ssh_url_to_repo", deleted_repo.git_url)
+                deleted_repo.git_http_url = project_info.get("http_url_to_repo", deleted_repo.git_http_url)
+                deleted_repo.project = project_obj
+                deleted_repo.module = module_obj
+                deleted_repo.repository_type = 'gitlab'
+                deleted_repo.save()
+                return Response({
+                    "code": 0,
+                    "message": "恢复成功",
+                    "data": {
+                        "id": deleted_repo.id,
+                        "name": deleted_repo.name,
+                        "gitlab_project_id": deleted_repo.gitlab_project_id
+                    }
+                })
 
             repo = CodeRepository.objects.create(
                 name=project_info.get("name", ""),

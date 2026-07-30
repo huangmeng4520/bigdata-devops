@@ -194,9 +194,9 @@ async function handleConfirm() {
       remark: formData.value.remark || '',
     };
     // 版本号：始终传递，即使为空
-    if (formData.value.version !== undefined && formData.value.version !== null) {
-      submitData.version = formData.value.version;
-    }
+  if (formData.value.version) {
+    submitData.version = formData.value.version;
+  }
     // 审批类型
     if (formData.value.approval_type) {
       submitData.approval_type = formData.value.approval_type;
