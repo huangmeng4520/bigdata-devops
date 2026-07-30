@@ -468,3 +468,9 @@ update harbor_user set salt='', password='' where user_id = 1;
 http://172.17.20.188:8080/jenkins/
 
 opsadmin:bigdata@2026
+
+
+cd existing_repo
+git remote add origin http://220.163.62.194:12001/devsecops/opsservice/bigdata-devops.git
+git branch -M main
+git push -uf origin main
