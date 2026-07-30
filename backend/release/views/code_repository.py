@@ -3,6 +3,7 @@
 代码仓库管理视图
 """
 import logging
+from django.db import IntegrityError
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
@@ -272,7 +273,16 @@ class CodeRepositoryViewSet(DataPermissionMixin, CustomModelViewSet):
                         deleted_repo.project = project_obj
                         deleted_repo.module = module_obj
                         deleted_repo.repository_type = 'gitlab'
-                        deleted_repo.save()
+                        try:
+                            deleted_repo.save()
+                        except IntegrityError:
+                            fail_count += 1
+                            results.append({
+                                "gitlab_project_id": gitlab_project_id,
+                                "status": "failed",
+                                "message": f"恢复失败：项目下已存在同名代码仓库（{deleted_repo.code}）"
+                            })
+                            continue
                         success_count += 1
                         results.append({
                             "gitlab_project_id": gitlab_project_id,
@@ -340,7 +350,7 @@ class CodeRepositoryViewSet(DataPermissionMixin, CustomModelViewSet):
             if not project_info:
                 return Response({"code": 1, "message": "GitLab Project 不存在"})
 
-            # 先解析项目/模块，供恢复与新建复用
+            # 先解析项目/模块：优先显式参数，否则按 GitLab namespace 路径自动匹配
             from ..models import Project, Module
 
             project_obj = None
@@ -358,11 +368,29 @@ class CodeRepositoryViewSet(DataPermissionMixin, CustomModelViewSet):
                 except Module.DoesNotExist:
                     return Response({"code": 1, "message": "模块不存在"})
 
+            # 未显式指定时，按 GitLab namespace 路径自动匹配项目/模块
+            if project_obj is None:
+                namespace = project_info.get("namespace", {}) or {}
+                full_path = namespace.get("full_path", "")
+                if full_path:
+                    path_parts = full_path.split("/")
+                    try:
+                        project_obj = Project.objects.get(code=path_parts[0], is_deleted=False)
+                    except Project.DoesNotExist:
+                        project_obj = None
+                    if project_obj and len(path_parts) >= 2:
+                        try:
+                            module_obj = Module.objects.get(
+                                project=project_obj, code=path_parts[1], is_deleted=False
+                            )
+                        except Module.DoesNotExist:
+                            module_obj = None
+
             # 已存在且未删除
             if CodeRepository.objects.filter(gitlab_project_id=gitlab_project_id, is_deleted=False).exists():
                 return Response({"code": 1, "message": "该 GitLab Project 已导入"})
 
-            # 若曾被软删除，恢复之（取消删除并更新字段）
+            # 若曾被软删除，恢复之（取消删除并校正项目/模块关联）
             deleted_repo = CodeRepository.objects.filter(
                 gitlab_project_id=gitlab_project_id, is_deleted=True
             ).first()
@@ -375,14 +403,22 @@ class CodeRepositoryViewSet(DataPermissionMixin, CustomModelViewSet):
                 deleted_repo.project = project_obj
                 deleted_repo.module = module_obj
                 deleted_repo.repository_type = 'gitlab'
-                deleted_repo.save()
+                try:
+                    deleted_repo.save()
+                except IntegrityError:
+                    return Response({
+                        "code": 1,
+                        "message": f"恢复失败：项目下已存在同名代码仓库（{deleted_repo.code}），请先清理重复数据"
+                    })
                 return Response({
                     "code": 0,
                     "message": "恢复成功",
                     "data": {
                         "id": deleted_repo.id,
                         "name": deleted_repo.name,
-                        "gitlab_project_id": deleted_repo.gitlab_project_id
+                        "gitlab_project_id": deleted_repo.gitlab_project_id,
+                        "project_id": deleted_repo.project_id,
+                        "module_id": deleted_repo.module_id,
                     }
                 })
 
