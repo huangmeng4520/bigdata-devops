@@ -7,7 +7,7 @@ from .models import (
     Project, Module, Application, CodeRepository, ConfigPackage, SyncLog,
     PipelineTemplate, PipelineTemplateVersion,
     ApplicationPipelineConfig, ApplicationPipelineVersion,
-    EnvironmentStrategy, CDConfigExport,
+    EnvironmentStrategy,
     ReleaseRecord, ReleaseBuildLog, ApprovalRule
 )
 
@@ -152,19 +152,6 @@ class EnvironmentStrategyFilter(django_filters.FilterSet):
     class Meta:
         model = EnvironmentStrategy
         fields = ['name', 'code', 'environment', 'is_default', 'status']
-
-
-class CDConfigExportFilter(django_filters.FilterSet):
-    """CD配置导出过滤器"""
-    application = django_filters.NumberFilter(field_name='application_id')
-    environment = django_filters.CharFilter()
-    config_version = django_filters.NumberFilter()
-    export_format = django_filters.CharFilter()
-    exported_by = django_filters.CharFilter(lookup_expr='icontains')
-
-    class Meta:
-        model = CDConfigExport
-        fields = ['application', 'environment', 'config_version', 'export_format', 'exported_by']
 
 
 # ============================================================

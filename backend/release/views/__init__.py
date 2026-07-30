@@ -11,7 +11,6 @@ __all__ = [
     'ApplicationPipelineConfigViewSet',
     'ApplicationPipelineVersionViewSet',
     'EnvironmentStrategyViewSet',
-    'CDConfigExportViewSet',
     # 发布管理
     'ReleaseRecordViewSet',
     'ApprovalRuleViewSet',
@@ -35,7 +34,6 @@ from .sync_log import SyncLogViewSet
 from .pipeline_template import PipelineTemplateViewSet, PipelineTemplateVersionViewSet
 from .application_pipeline import ApplicationPipelineConfigViewSet, ApplicationPipelineVersionViewSet
 from .environment_strategy import EnvironmentStrategyViewSet
-from .cd_config_export import CDConfigExportViewSet
 # 发布管理
 from .release import (
     ReleaseRecordViewSet, ApprovalRuleViewSet,

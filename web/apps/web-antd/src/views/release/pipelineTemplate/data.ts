@@ -204,47 +204,5 @@ export function useSchema(isEdit: boolean = false): VbenFormSchema[] {
     },
   ];
 
-  if (!isEdit) {
-    baseSchema.push(
-      {
-        component: 'Divider',
-        componentProps: { orientation: 'left', orientationMargin: '50px', children: '模板内容（第一版本）' },
-        fieldName: 'version_divider',
-      },
-      {
-        component: 'Input',
-        fieldName: 'version',
-        label: '版本号',
-        componentProps: { placeholder: '如: 1.0.0', style: { width: '150px' } },
-        defaultValue: '1.0.0',
-      },
-      {
-        component: 'Textarea',
-        fieldName: 'environment',
-        label: '环境变量 (environment)',
-        componentProps: { rows: 6, class: 'font-mono', placeholder: 'DOCKER_REGISTRY = "harbor.example.com"\nGIT_REPO = \'${GIT_REPO}\'\nIMAGE_BASE = "${DOCKER_REGISTRY}/${params.PROJECT}-${params.MODULE}/${params.APP}"' },
-      },
-      {
-        component: 'Textarea',
-        fieldName: 'content',
-        label: 'Jenkinsfile (不含 environment)',
-        componentProps: { rows: 12, class: 'font-mono' },
-      },
-      {
-        component: 'Textarea',
-        fieldName: 'change_log',
-        label: '变更日志',
-        componentProps: { rows: 2 },
-        defaultValue: '初始版本',
-      },
-      {
-        component: 'Switch',
-        fieldName: 'is_latest',
-        label: '设为最新版本',
-        defaultValue: true,
-      },
-    );
-  }
-
   return baseSchema;
 }

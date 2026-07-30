@@ -68,15 +68,6 @@ const routes: RouteRecordRaw[] = [
         },
         component: () => import('#/views/release/environmentStrategy/index.vue'),
       },
-      {
-        path: '/release/cd-export',
-        name: 'ReleaseCdExport',
-        meta: {
-          icon: 'mdi:download',
-          title: 'CD配置导出',
-        },
-        component: () => import('#/views/release/cdConfigExport/index.vue'),
-      },
       // 发布记录
       {
         path: '/release/record',

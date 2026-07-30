@@ -159,8 +159,8 @@ async function importTemplate(data: PipelineTemplateApi.ExportData) {
   return requestClient.post<{ id: number }>('/release/pipeline-templates/import_config/', data);
 }
 
-async function autoVersionIncrement(versionId: number, changeLog?: string) {
-  return requestClient.post<PipelineTemplateApi.TemplateVersion>(`/release/pipeline-template-versions/${versionId}/auto_version/`, { change_log: changeLog });
+async function deleteTemplateVersion(versionId: number) {
+  return requestClient.delete(`/release/pipeline-template-versions/${versionId}/`);
 }
 
 async function updateStage(versionId: number, stageName: string, stageScript: string) {
@@ -176,7 +176,7 @@ async function updateVersion(versionId: number, data: { version?: string; conten
 }
 
 export {
-  autoVersionIncrement,
+  deleteTemplateVersion,
   copyTemplate,
   createTemplate,
   createTemplateVersion,

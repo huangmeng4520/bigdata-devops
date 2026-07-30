@@ -83,15 +83,6 @@ class Command(BaseCommand):
                 ]
             },
             {
-                'menu_path': '/release/cd-export',
-                'menu_name': 'CDConfigExport',
-                'buttons': [
-                    {'name': 'CDConfigExportCreate', 'title': '新增CD配置导出', 'auth_code': 'release:cd_config_export:create'},
-                    {'name': 'CDConfigExportEdit', 'title': '编辑CD配置导出', 'auth_code': 'release:cd_config_export:edit'},
-                    {'name': 'CDConfigExportDelete', 'title': '删除CD配置导出', 'auth_code': 'release:cd_config_export:delete'},
-                ]
-            },
-            {
                 'menu_path': '/release/record',
                 'menu_name': 'ReleaseRecord',
                 'buttons': [

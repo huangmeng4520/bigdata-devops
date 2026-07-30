@@ -22,57 +22,10 @@ const formData = ref<Partial<PipelineTemplateApi.Template>>();
 const isEdit = computed(() => !!formData.value?.id);
 const modalTitle = computed(() => (isEdit.value ? '编辑模板' : '创建模板'));
 
-function extractEnvironment(fullContent: string): { environment: string; content: string } {
-  const envMatch = fullContent.match(/environment\s*\{/);
-  if (!envMatch) return { environment: '', content: fullContent };
-  const start = envMatch.index! + envMatch[0].length;
-  let depth = 1;
-  let inString: string | null = null;
-  let end = start;
-  for (const ch of fullContent.slice(start)) {
-    if (inString) {
-      if (ch === inString) inString = null;
-    } else if (ch === "'" || ch === '"') {
-      inString = ch;
-    } else if (ch === '{') {
-      depth++;
-    } else if (ch === '}') {
-      depth--;
-      if (depth === 0) break;
-    }
-    end++;
-  }
-  const env = fullContent.slice(start, end);
-  const content = (fullContent.slice(0, envMatch.index!) + fullContent.slice(end + 1)).trim();
-  return { environment: env.trim(), content };
-}
-
-function mergeEnvironment(environment: string, content: string): string {
-  if (!environment.trim()) return content;
-  const lines = content.split('\n');
-  const stagesIdx = lines.findIndex(l => l.trim() === 'stages {');
-  if (stagesIdx === -1) return `environment {\n${environment}\n}\n\n${content}`;
-  const indent = lines[stagesIdx].match(/^(\s*)/)?.[1] || '';
-  const envBlock = `${indent}environment {\n${environment
-    .split('\n')
-    .map(l => `${indent}    ${l.trim()}`)
-    .join('\n')}\n${indent}}\n`;
-  lines.splice(stagesIdx, 0, '', envBlock);
-  return lines.join('\n');
-}
-
 const [Form, formApi] = useVbenForm({
   layout: 'vertical',
   schema: useSchema(false),
   showDefaultActions: false,
-  handleValuesChange(values, fieldsChanged) {
-    if (!isEdit.value && fieldsChanged.includes('language')) {
-      const full = getDefaultContent();
-      const { environment, content } = extractEnvironment(full);
-      formApi.setFieldValue('environment', environment);
-      formApi.setFieldValue('content', content);
-    }
-  },
 });
 
 function getDefaultEnv(): string {
@@ -234,8 +187,6 @@ const [Modal, modalApi] = useVbenModal({
           { fieldName: 'code', componentProps: { disabled: false } },
         ]);
         
-        const defaultContent = getDefaultContent();
-        const { environment, content } = extractEnvironment(defaultContent);
         formApi.setValues({
           name: '',
           code: '',
@@ -245,11 +196,6 @@ const [Modal, modalApi] = useVbenModal({
           description: '',
           is_official: false,
           status: 1,
-          version: '1.0.0',
-          environment,
-          content,
-          change_log: '初始版本',
-          is_latest: true,
         });
       }
     }
@@ -268,11 +214,21 @@ async function loadData(id: number) {
 
 async function handleSubmit() {
   const values = await formApi.getValues();
-  const fullContent = mergeEnvironment(values.environment || '', values.content || '');
+  const payload = {
+    name: values.name,
+    code: values.code,
+    language: values.language,
+    language_version: values.language_version,
+    framework: values.framework,
+    description: values.description,
+    is_official: values.is_official,
+    status: values.status,
+  };
   if (isEdit.value) {
     modalApi.lock();
     try {
-      await updateTemplate(formData.value!.id!, { ...values, content: fullContent });
+      // 模板主界面只维护元信息，Jenkinsfile 内容交由版本管理维护
+      await updateTemplate(formData.value!.id!, payload);
       message.success('更新成功');
       modalApi.close();
       emit('success');
@@ -284,28 +240,18 @@ async function handleSubmit() {
   } else {
     modalApi.lock();
     try {
-      const template = await createTemplate({
-        name: values.name,
-        code: values.code,
-        language: values.language,
-        language_version: values.language_version,
-        framework: values.framework,
-        description: values.description,
-        is_official: values.is_official,
-        status: values.status,
-      });
+      const template = await createTemplate(payload);
       message.success('模板创建成功');
-
-      if (values.version && fullContent) {
-        await createTemplateVersion(template.id, {
-          template: template.id,
-          version: values.version,
-          content: fullContent,
-          change_log: values.change_log || '初始版本',
-          is_latest: values.is_latest,
-        });
-        message.success('版本创建成功');
-      }
+      // 自动生成默认第一版本，便于在版本管理中查看/编辑
+      const fullContent = getDefaultContent(values.language);
+      await createTemplateVersion(template.id, {
+        template: template.id,
+        version: '1.0.0',
+        content: fullContent,
+        change_log: '初始版本（默认模板）',
+        is_latest: true,
+      });
+      message.success('默认版本创建成功');
       modalApi.close();
       emit('success');
     } catch (error: any) {

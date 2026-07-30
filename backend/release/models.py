@@ -500,37 +500,6 @@ class EnvironmentStrategy(CoreModel):
         return self.name
 
 
-class CDConfigExport(CoreModel):
-    """CD 配置导出记录"""
-    EXPORT_FORMAT_CHOICES = [
-        ('jenkinsfile', 'Jenkinsfile'),
-        ('json', 'JSON 配置'),
-        ('yaml', 'YAML 配置'),
-        ('zip', '压缩包'),
-    ]
-
-    application = models.ForeignKey(
-        Application, on_delete=models.CASCADE,
-        related_name='cd_exports', verbose_name="所属应用"
-    )
-    environment = models.CharField(max_length=32, verbose_name="环境")
-    config_version = models.IntegerField(verbose_name="配置版本")
-    export_format = models.CharField(max_length=20, choices=EXPORT_FORMAT_CHOICES, verbose_name="导出格式")
-    content = models.TextField(verbose_name="导出内容")
-    file_path = models.CharField(max_length=512, blank=True, null=True, verbose_name="文件路径")
-    exported_by = models.CharField(max_length=64, verbose_name="导出人")
-    download_count = models.IntegerField(default=0, verbose_name="下载次数")
-
-    class Meta:
-        db_table = "release_cd_config_export"
-        verbose_name = "CD配置导出"
-        verbose_name_plural = verbose_name
-        ordering = ["-create_time"]
-
-    def __str__(self):
-        return f"{self.application.name} - {self.environment} - v{self.config_version}"
-
-
 # ============================================================
 # 发布管理相关模型
 # ============================================================

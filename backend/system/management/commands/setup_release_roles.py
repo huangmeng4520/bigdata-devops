@@ -23,7 +23,7 @@ from system.models import (
 RELEASE_MODELS = [
     'project', 'module', 'code_repository', 'application', 'config_package',
     'application_pipeline_config', 'pipeline_template', 'environment_strategy',
-    'cd_config_export', 'release_record', 'sync_log', 'approval_rule',
+    'release_record', 'sync_log', 'approval_rule',
 ]
 
 STANDARD = ['query', 'create', 'edit', 'delete']
@@ -52,7 +52,6 @@ PATH_MAP = {
     'application_pipeline_config': '/release/pipeline',
     'pipeline_template': '/release/pipeline-template',
     'environment_strategy': '/release/environment-strategy',
-    'cd_config_export': '/release/cd-config-export',
     'release_record': '/release/record',
     'sync_log': '/release/sync-log',
     'approval_rule': '/release/approval-rule',
@@ -246,7 +245,6 @@ class Command(BaseCommand):
             'application': STANDARD + CUSTOM['application'],
             'config_package': STANDARD,
             'application_pipeline_config': STANDARD,
-            'cd_config_export': STANDARD,
             'release_record': ['query', 'create', 'edit', 'trigger', 'cancel', 'retry'],
             'sync_log': ['query'],
             'project': ['query'],

@@ -8,13 +8,11 @@ import { useVbenModal } from '@vben/common-ui';
 import { message, Modal as AModal, Drawer, Select, SelectOption, Alert } from 'ant-design-vue';
 
 import {
-  autoVersionIncrement,
   createTemplateVersion,
+  deleteTemplateVersion,
   getTemplateVersions,
   getVersionDetail,
   setLatestVersion,
-  updateVersion,
-  updateVersionContent,
 } from '#/api/release';
 import {
   parseStages,
@@ -27,10 +25,10 @@ import {
 
 const emit = defineEmits(['success']);
 
-// 关闭抽屉
+// 关闭版本管理弹窗
 function handleClose() {
   detailDrawerVisible.value = false;
-  return true;
+  modalApi.close();
 }
 
 const [Modal, modalApi] = useVbenModal({
@@ -59,12 +57,7 @@ const viewMode = ref<'list' | 'create'>('list');
 const detailDrawerVisible = ref(false);
 const currentDetailVersion = ref<PipelineTemplateApi.TemplateVersion | null>(null);
 const detailLoading = ref(false);
-const editMode = ref(false);
-const editForm = ref({
-  version: '',
-  content: '',
-  change_log: '',
-});
+const deletingId = ref<number | null>(null);
 
 // 创建新版本
 const newVersionData = ref({
@@ -73,6 +66,9 @@ const newVersionData = ref({
   change_log: '',
   is_latest: true,
 });
+
+const stageSaving = ref(false);
+const envSaving = ref(false);
 
 // Stage 编辑
 const stageEditorVisible = ref(false);
@@ -126,11 +122,12 @@ function generateNextVersion(): string {
   return '1.0.0';
 }
 
-// 显示创建表单
+// 显示创建表单（默认带最新版本内容，减少空白起步）
 function showCreateForm() {
+  const latest = versionList.value.find(v => v.is_latest) || versionList.value[0];
   newVersionData.value = {
     version: generateNextVersion(),
-    content: '',
+    content: latest?.content || '',
     change_log: '',
     is_latest: true,
   };
@@ -140,17 +137,20 @@ function showCreateForm() {
 // 从最新版本复制
 async function copyFromLatest() {
   const latest = versionList.value.find(v => v.is_latest);
-  if (latest) {
-    try {
-      const detail = await getVersionDetail(latest.id);
-      newVersionData.value.content = detail.content || '';
-      message.success('已复制最新版本内容');
-    } catch {
-      newVersionData.value.content = latest.content || '';
-      message.success('已复制最新版本内容');
-    }
-  } else {
+  if (!latest) {
     message.warning('没有最新版本可复制');
+    return;
+  }
+  try {
+    modalApi.lock();
+    const detail = await getVersionDetail(latest.id);
+    newVersionData.value.content = detail.content || '';
+    message.success('已复制最新版本内容');
+  } catch {
+    newVersionData.value.content = latest.content || '';
+    message.success('已复制最新版本内容');
+  } finally {
+    modalApi.lock(false);
   }
 }
 
@@ -174,6 +174,7 @@ async function handleCreateVersion() {
   }
 
   try {
+    modalApi.lock();
     await createTemplateVersion(currentTemplate.value.id, newVersionData.value);
     message.success('版本创建成功');
     viewMode.value = 'list';
@@ -181,6 +182,8 @@ async function handleCreateVersion() {
     emit('success');
   } catch (error: any) {
     message.error(error?.message || '创建失败');
+  } finally {
+    modalApi.lock(false);
   }
 }
 
@@ -188,87 +191,54 @@ async function handleCreateVersion() {
 async function viewVersionDetail(version: PipelineTemplateApi.TemplateVersion) {
   detailLoading.value = true;
   detailDrawerVisible.value = true;
-  editMode.value = false;
   try {
     const detail = await getVersionDetail(version.id);
     currentDetailVersion.value = detail;
-    editForm.value = {
-      version: detail.version || '',
-      content: detail.content || '',
-      change_log: detail.change_log || '',
-    };
   } catch {
     currentDetailVersion.value = version;
-    editForm.value = {
-      version: version.version || '',
-      content: version.content || '',
-      change_log: version.change_log || '',
-    };
   } finally {
     detailLoading.value = false;
-  }
-}
-
-// 开启编辑模式
-function startEdit() {
-  if (!currentDetailVersion.value) return;
-  editMode.value = true;
-}
-
-// 保存编辑
-async function saveEdit() {
-  if (!currentDetailVersion.value) return;
-  
-  // 验证格式
-  const validation = validateJenkinsfile(editForm.value.content);
-  if (!validation.valid) {
-    message.error('Jenkinsfile 格式错误：' + validation.error);
-    return;
-  }
-
-  try {
-    await updateVersion(currentDetailVersion.value.id, editForm.value);
-    message.success('保存成功');
-    editMode.value = false;
-    await loadVersions();
-    // 更新当前详情
-    currentDetailVersion.value = {
-      ...currentDetailVersion.value,
-      ...editForm.value,
-    };
-    emit('success');
-  } catch (error: any) {
-    message.error(error?.message || '保存失败');
   }
 }
 
 // 设为最新版本
 async function handleSetLatest(version: PipelineTemplateApi.TemplateVersion) {
   try {
+    modalApi.lock();
     await setLatestVersion(version.id);
     message.success('已设为最新版本');
     await loadVersions();
     emit('success');
   } catch {
     message.error('操作失败');
+  } finally {
+    modalApi.lock(false);
   }
 }
 
-// 自动版本迭代
-async function handleAutoVersion(version: PipelineTemplateApi.TemplateVersion) {
+// 删除版本（最新版本不可删除；已关联应用的版本禁止删除）
+async function handleDeleteVersion(version: PipelineTemplateApi.TemplateVersion) {
+  if (version.is_latest) {
+    message.warning('最新版本不可删除');
+    return;
+  }
   AModal.confirm({
-    title: '自动版本迭代',
-    content: `将基于版本 ${version.version} 自动创建新版本（版本号自动递增），是否继续？`,
-    okText: '确定',
+    title: '确认删除版本',
+    content: `确定要删除版本「${version.version}」吗？删除后不可恢复。`,
+    okText: '删除',
+    okType: 'danger',
     cancelText: '取消',
     onOk: async () => {
       try {
-        await autoVersionIncrement(version.id, '自动版本迭代');
-        message.success('新版本创建成功');
+        deletingId.value = version.id;
+        await deleteTemplateVersion(version.id);
+        message.success('删除成功');
         await loadVersions();
         emit('success');
       } catch (error: any) {
-        message.error(error?.message || '操作失败');
+        message.error(error?.message || '删除失败');
+      } finally {
+        deletingId.value = null;
       }
     },
   });
@@ -277,15 +247,9 @@ async function handleAutoVersion(version: PipelineTemplateApi.TemplateVersion) {
 // 编辑 Stage
 async function handleEditStage(version: PipelineTemplateApi.TemplateVersion) {
   try {
-    console.log('[handleEditStage] 开始加载版本:', version.id, version.version);
     const detail = await getVersionDetail(version.id);
-    console.log('[handleEditStage] 版本详情:', detail);
-    console.log('[handleEditStage] content 长度:', detail?.content?.length || 0);
-
     originalJenkinsfile.value = detail?.content || '';
     const stages = parseStages(originalJenkinsfile.value);
-    console.log('[handleEditStage] 解析出的 stages:', stages.length, stages.map(s => s.name));
-
     availableStages.value = stages.map(stage => ({
       name: stage.name,
       content: extractStageScript(stage.content),
@@ -294,7 +258,6 @@ async function handleEditStage(version: PipelineTemplateApi.TemplateVersion) {
     if (availableStages.value.length > 0) {
       currentStageName.value = availableStages.value[0].name;
       currentStageScript.value = availableStages.value[0].content;
-      console.log('[handleEditStage] 当前 stage:', currentStageName.value, '内容长度:', currentStageScript.value.length);
     } else {
       currentStageName.value = '';
       currentStageScript.value = '';
@@ -303,8 +266,7 @@ async function handleEditStage(version: PipelineTemplateApi.TemplateVersion) {
     }
 
     stageEditorVisible.value = true;
-  } catch (error: any) {
-    console.error('[handleEditStage] 错误:', error);
+  } catch {
     message.error('加载版本详情失败');
   }
 }
@@ -322,16 +284,12 @@ async function handleSaveStage() {
   if (!currentStageName.value || !currentTemplate.value?.id) return;
 
   try {
-    console.log('[handleSaveStage] 原始 Jenkinsfile 长度:', originalJenkinsfile.value.length);
-    console.log('[handleSaveStage] 当前 Stage:', currentStageName.value);
-    console.log('[handleSaveStage] 当前脚本长度:', currentStageScript.value.length);
-
+    stageSaving.value = true;
     const updatedJenkinsfile = updateStageSteps(
       originalJenkinsfile.value,
       currentStageName.value,
       currentStageScript.value
     );
-    console.log('[handleSaveStage] 更新后 Jenkinsfile 长度:', updatedJenkinsfile.length);
 
     const validation = validateJenkinsfile(updatedJenkinsfile);
     if (!validation.valid) {
@@ -340,8 +298,6 @@ async function handleSaveStage() {
     }
 
     const nextVersion = generateNextVersion();
-    console.log('[handleSaveStage] 创建版本:', nextVersion);
-
     await createTemplateVersion(currentTemplate.value.id, {
       version: nextVersion,
       content: updatedJenkinsfile,
@@ -354,8 +310,9 @@ async function handleSaveStage() {
     await loadVersions();
     emit('success');
   } catch (error: any) {
-    console.error('[handleSaveStage] 错误:', error);
     message.error(error?.message || '保存失败');
+  } finally {
+    stageSaving.value = false;
   }
 }
 
@@ -384,6 +341,7 @@ async function handleSaveEnvironment() {
   if (!originalJenkinsfile.value || !currentTemplate.value?.id) return;
 
   try {
+    envSaving.value = true;
     const updatedJenkinsfile = updateEnvironment(
       originalJenkinsfile.value,
       currentEnvContent.value
@@ -410,6 +368,8 @@ async function handleSaveEnvironment() {
     emit('success');
   } catch (error: any) {
     message.error(error?.message || '保存失败');
+  } finally {
+    envSaving.value = false;
   }
 }
 
@@ -438,6 +398,23 @@ async function openCompare() {
 
   // 自动加载对比内容
   await loadCompareVersions();
+}
+
+// 与上一个版本对比（基于当前选中的目标版本）
+function compareWithPrev() {
+  const toId = parseInt(compareVersions.value.to);
+  if (!toId) {
+    message.warning('请先选择目标版本');
+    return;
+  }
+  const idx = versionList.value.findIndex(v => v.id === toId);
+  const prev = versionList.value[idx + 1];
+  if (!prev) {
+    message.warning('该版本没有更早的版本可对比');
+    return;
+  }
+  compareVersions.value = { from: String(prev.id), to: String(toId) };
+  loadCompareVersions();
 }
 
 async function loadCompareVersions() {
@@ -687,8 +664,15 @@ function getStatusColor(version: PipelineTemplateApi.TemplateVersion): string {
                   <a-button type="primary" size="small" ghost @click="handleEditEnvironment(version)">
                     编辑Environment
                   </a-button>
-                  <a-button type="primary" size="small" @click="handleAutoVersion(version)">
-                    迭代版本
+                  <a-button
+                    v-if="!version.is_latest"
+                    type="primary"
+                    size="small"
+                    danger
+                    :loading="deletingId === version.id"
+                    @click="handleDeleteVersion(version)"
+                  >
+                    删除
                   </a-button>
                 </div>
               </div>
@@ -698,102 +682,56 @@ function getStatusColor(version: PipelineTemplateApi.TemplateVersion): string {
       </a-spin>
     </div>
 
-    <!-- 版本详情抽屉 -->
+    <!-- 版本详情抽屉（只读，展示完整 Pipeline） -->
     <Drawer
       v-model:open="detailDrawerVisible"
-      :title="editMode ? `编辑版本 ${currentDetailVersion?.version}` : `版本 ${currentDetailVersion?.version}`"
+      :title="`版本 ${currentDetailVersion?.version}`"
       :width="800"
-      :footer-style="{ textAlign: 'right' }"
     >
       <template #extra>
-        <a-space v-if="!editMode">
-          <a-button type="primary" @click="startEdit">编辑</a-button>
-        </a-space>
+        <a-button @click="detailDrawerVisible = false">关闭</a-button>
       </template>
-      
+
       <a-spin :spinning="detailLoading">
         <div v-if="currentDetailVersion" class="detail-content">
-          <!-- 查看模式 -->
-          <template v-if="!editMode">
-            <div class="detail-section">
-              <div class="section-title">基本信息</div>
-              <div class="info-grid">
-                <div class="info-item">
-                  <span class="info-label">版本号</span>
-                  <span class="info-value">{{ currentDetailVersion.version }}</span>
-                </div>
-                <div class="info-item">
-                  <span class="info-label">状态</span>
-                  <span class="info-value">
-                    <a-tag :color="currentDetailVersion.status === 1 ? 'success' : 'default'">
-                      {{ currentDetailVersion.status === 1 ? '启用' : '禁用' }}
-                    </a-tag>
-                    <a-tag v-if="currentDetailVersion.is_latest" color="blue">最新</a-tag>
-                  </span>
-                </div>
-                <div class="info-item">
-                  <span class="info-label">创建时间</span>
-                  <span class="info-value">{{ formatTime(currentDetailVersion.create_time) }}</span>
-                </div>
-                <div class="info-item">
-                  <span class="info-label">创建者</span>
-                  <span class="info-value">{{ currentDetailVersion.creator || '系统' }}</span>
-                </div>
+          <!-- 元信息 -->
+          <div class="detail-section">
+            <div class="info-grid">
+              <div class="info-item">
+                <span class="info-label">状态</span>
+                <span class="info-value">
+                  <a-tag :color="currentDetailVersion.status === 1 ? 'success' : 'default'">
+                    {{ currentDetailVersion.status === 1 ? '启用' : '禁用' }}
+                  </a-tag>
+                  <a-tag v-if="currentDetailVersion.is_latest" color="blue">最新</a-tag>
+                </span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">创建时间</span>
+                <span class="info-value">{{ formatTime(currentDetailVersion.create_time) }}</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">创建者</span>
+                <span class="info-value">{{ currentDetailVersion.creator || '系统' }}</span>
               </div>
             </div>
-            
-            <div class="detail-section">
-              <div class="section-title">变更说明</div>
-              <div class="change-log-box">
-                {{ currentDetailVersion.change_log || '无变更说明' }}
-              </div>
+          </div>
+
+          <!-- 变更说明 -->
+          <div class="detail-section">
+            <div class="section-title">变更说明</div>
+            <div class="change-log-box">{{ currentDetailVersion.change_log || '无' }}</div>
+          </div>
+
+          <!-- 完整 Pipeline（Jenkinsfile） -->
+          <div class="detail-section">
+            <div class="section-title">完整 Pipeline（Jenkinsfile）</div>
+            <div class="code-viewer">
+              <pre><code>{{ currentDetailVersion.content }}</code></pre>
             </div>
-            
-            <div class="detail-section">
-              <div class="section-title">Jenkinsfile</div>
-              <div class="code-viewer">
-                <pre><code>{{ currentDetailVersion.content || '(无内容)' }}</code></pre>
-              </div>
-            </div>
-          </template>
-          
-          <!-- 编辑模式 -->
-          <template v-else>
-            <div class="edit-form">
-              <div class="form-item mb-4">
-                <label class="form-label">版本号</label>
-                <a-input v-model:value="editForm.version" style="width: 200px" />
-              </div>
-              <div class="form-item mb-4">
-                <label class="form-label">变更说明</label>
-                <a-textarea v-model:value="editForm.change_log" :rows="2" placeholder="描述本次版本变更" />
-              </div>
-              <div class="form-item">
-                <label class="form-label">Jenkinsfile</label>
-                <div class="editor-container">
-                  <textarea
-                    v-model="editForm.content"
-                    class="code-editor"
-                    spellcheck="false"
-                  />
-                </div>
-              </div>
-            </div>
-          </template>
+          </div>
         </div>
       </a-spin>
-      
-      <template #footer>
-        <a-space>
-          <template v-if="editMode">
-            <a-button @click="editMode = false">取消</a-button>
-            <a-button type="primary" @click="saveEdit">保存</a-button>
-          </template>
-          <template v-else>
-            <a-button @click="detailDrawerVisible = false">关闭</a-button>
-          </template>
-        </a-space>
-      </template>
     </Drawer>
 
     <!-- Stage 编辑弹窗 -->
@@ -801,6 +739,7 @@ function getStatusColor(version: PipelineTemplateApi.TemplateVersion): string {
       v-model:open="stageEditorVisible"
       title="编辑 Stage"
       :width="800"
+      :confirm-loading="stageSaving"
       @ok="handleSaveStage"
     >
       <Alert type="info" class="mb-4" banner>
@@ -840,6 +779,7 @@ function getStatusColor(version: PipelineTemplateApi.TemplateVersion): string {
       v-model:open="envEditorVisible"
       title="编辑 Environment"
       :width="800"
+      :confirm-loading="envSaving"
       @ok="handleSaveEnvironment"
     >
       <Alert type="info" class="mb-4" banner>
@@ -887,6 +827,7 @@ function getStatusColor(version: PipelineTemplateApi.TemplateVersion): string {
               </SelectOption>
             </Select>
           </div>
+          <a-button @click="compareWithPrev">与上一版本对比</a-button>
         </a-space>
       </div>
 

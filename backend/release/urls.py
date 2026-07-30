@@ -21,7 +21,6 @@ router.register(r'pipeline-template-versions', views.PipelineTemplateVersionView
 router.register(r'application-pipeline-configs', views.ApplicationPipelineConfigViewSet, basename='release-application-pipeline-config')
 router.register(r'application-pipeline-versions', views.ApplicationPipelineVersionViewSet, basename='release-application-pipeline-version')
 router.register(r'environment-strategies', views.EnvironmentStrategyViewSet, basename='release-environment-strategy')
-router.register(r'cd-exports', views.CDConfigExportViewSet, basename='release-cd-export')
 
 # 发布管理路由
 router.register(r'release-records', views.ReleaseRecordViewSet, basename='release-record')

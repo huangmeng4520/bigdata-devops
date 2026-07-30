@@ -7,7 +7,7 @@ from .models import (
     Project, Module, Application, CodeRepository, ConfigPackage, SyncLog,
     PipelineTemplate, PipelineTemplateVersion,
     ApplicationPipelineConfig, ApplicationPipelineVersion,
-    EnvironmentStrategy, CDConfigExport,
+    EnvironmentStrategy,
     ReleaseRecord, ReleaseBuildLog, ApprovalRule
 )
 
@@ -374,25 +374,6 @@ class EnvironmentStrategyCreateSerializer(serializers.ModelSerializer):
             "name", "code", "environment",
             "requires_approval", "auto_deploy", "description", "is_default", "status"
         ]
-
-
-class CDConfigExportSerializer(serializers.ModelSerializer):
-    """CD配置导出序列化器"""
-    application_name = serializers.CharField(source="application.name", read_only=True)
-    export_format_display = serializers.CharField(source='get_export_format_display', read_only=True)
-    exported_by_name = serializers.CharField(source="exported_by", read_only=True)
-
-    class Meta:
-        model = CDConfigExport
-        fields = "__all__"
-        read_only_fields = ["creator", "create_time", "update_time", "download_count"]
-
-
-class CDConfigExportCreateSerializer(serializers.ModelSerializer):
-    """CD配置导出创建序列化器"""
-    class Meta:
-        model = CDConfigExport
-        fields = ["application", "environment", "config_version", "export_format", "content", "file_path", "exported_by"]
 
 
 # ============================================================

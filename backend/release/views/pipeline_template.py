@@ -246,6 +246,30 @@ class PipelineTemplateVersionViewSet(CustomModelViewSet):
         serializer = self.get_serializer(instance)
         return Response({'code': 0, 'data': serializer.data})
 
+    def destroy(self, request, *args, **kwargs):
+        """删除版本 - 保护最新版本，并校验是否被应用关联"""
+        instance = self.get_object()
+
+        # 保护最新版本，不允许删除
+        if instance.is_latest:
+            return Response(
+                {'code': 1, 'message': '最新版本不可删除'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 校验是否被应用流水线配置关联
+        if instance.configs.exists():
+            return Response(
+                {'code': 1, 'message': '该版本已被应用流水线配置关联，无法删除'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 软删除，保留历史记录
+        instance.is_deleted = True
+        instance.save(update_fields=['is_deleted'])
+
+        return self._build_response(message='删除成功')
+
     def update(self, request, *args, **kwargs):
         """更新版本 - 返回统一格式"""
         partial = kwargs.pop('partial', False)
@@ -301,54 +325,4 @@ class PipelineTemplateVersionViewSet(CustomModelViewSet):
         
         return Response({'code': 0, 'message': '已设置为最新版本'})
 
-    @action(detail=True, methods=['post'])
-    def auto_version(self, request, pk=None):
-        """自动创建新版本（版本号自动递增）"""
-        version = self.get_object()
-        template = version.template
-        
-        # 自动递增版本号
-        new_version_number = version.auto_increment_version()
-        
-        # 检查版本号是否已存在
-        if PipelineTemplateVersion.objects.filter(template=template, version=new_version_number).exists():
-            return Response({'code': 1, 'message': f'版本 {new_version_number} 已存在'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # 取消其他版本的最新标记
-        PipelineTemplateVersion.objects.filter(template=template).update(is_latest=False)
-        
-        # 创建新版本
-        new_version = PipelineTemplateVersion.objects.create(
-            template=template,
-            version=new_version_number,
-            content=version.content,
-            variables=version.variables,
-            stages=version.stages,
-            stages_content=version.stages_content,
-            change_log=request.data.get('change_log', '自动版本迭代'),
-            is_latest=True,
-            status=version.status,
-            creator=request.user.username
-        )
-        
-        serializer = PipelineTemplateVersionSerializer(new_version)
-        return Response({'code': 0, 'message': '新版本创建成功', 'data': serializer.data})
 
-    @action(detail=True, methods=['put'])
-    def update_stage(self, request, pk=None):
-        """更新单个阶段的脚本"""
-        version = self.get_object()
-        stage_name = request.data.get('stage_name')
-        stage_script = request.data.get('stage_script')
-        
-        if not stage_name:
-            return Response({'code': 1, 'message': '阶段名称不能为空'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # 更新阶段脚本
-        stages_content = version.stages_content or {}
-        stages_content[stage_name] = stage_script
-        version.stages_content = stages_content
-        version.modifier = request.user.username
-        version.save()
-        
-        return Response({'code': 0, 'message': '阶段脚本更新成功'})
