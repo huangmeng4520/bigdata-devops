@@ -32,8 +32,16 @@ const [Form, formApi] = useVbenForm({
   schema: useSchema(),
   showDefaultActions: false,
   handleValuesChange(_values, fieldsChanged) {
-    if (fieldsChanged.includes('project') && !fieldsChanged.includes('module')) {
-      formApi.setFieldValue('module', undefined);
+    const changing = new Set(fieldsChanged);
+    // project 变化 → 清空 module 与 code_repository，触发重新拉取
+    if (changing.has('project')) {
+      formApi.setFieldValue('code_repository', undefined);
+      if (!changing.has('module')) {
+        formApi.setFieldValue('module', undefined);
+      }
+    }
+    // module 变化 → 清空 code_repository，使其按模块精确过滤
+    if (changing.has('module') && !changing.has('project')) {
       formApi.setFieldValue('code_repository', undefined);
     }
   },

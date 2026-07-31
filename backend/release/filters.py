@@ -29,12 +29,13 @@ class CodeRepositoryFilter(django_filters.FilterSet):
     code = django_filters.CharFilter(lookup_expr='icontains')
     project = django_filters.NumberFilter()
     module = django_filters.NumberFilter()
+    module__isnull = django_filters.BooleanFilter(field_name='module', lookup_expr='isnull')
     repository_type = django_filters.CharFilter()
     status = django_filters.NumberFilter()
 
     class Meta:
         model = CodeRepository
-        fields = ['name', 'code', 'project', 'module', 'repository_type', 'status']
+        fields = ['name', 'code', 'project', 'module', 'module__isnull', 'repository_type', 'status']
 
 
 class ModuleFilter(django_filters.FilterSet):

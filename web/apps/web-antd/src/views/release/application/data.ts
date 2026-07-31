@@ -78,18 +78,21 @@ export function useSchema(): VbenFormSchema[] {
           const projectId = values.project;
           const moduleId = values.module;
           let params: any = { status: 1, page_size: 1000 };
-          
+
           if (moduleId) {
+            // 选了模块：精确过滤到该模块下的仓库
             params.module = moduleId;
           } else if (projectId) {
+            // 只选项目：仅过滤直接挂在项目下（无模块）的仓库
             params.project = projectId;
+            params.module__isnull = true;
           } else {
             params = undefined;
           }
-          
+
           return {
             params,
-            placeholder: moduleId || projectId ? '请选择代码仓库' : '请先选择项目或模块',
+            placeholder: moduleId ? '请选择代码仓库' : (projectId ? '请选择代码仓库（仅项目级）' : '请先选择项目或模块'),
           };
         },
         trigger: (_values, _form) => {
@@ -100,6 +103,7 @@ export function useSchema(): VbenFormSchema[] {
         resultField: 'items',
         labelField: 'name',
         valueField: 'id',
+        immediate: false,
         showSearch: true,
         filterOption: (input: string, option: { label: string }) =>
           option.label.toLowerCase().includes(input.toLowerCase()),
