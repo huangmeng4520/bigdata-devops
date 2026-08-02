@@ -1055,3 +1055,198 @@ def sync_code_repository_gitlab(self, repo_id: int):
     except Exception as e:
         logger.exception(f"[Celery] 代码仓库同步异常: {e}")
         return {"success": False, "error": str(e)}
+
+
+@shared_task(bind=True, max_retries=1)
+def import_gitlab_projects_batch(self, items: list, username: str):
+    """
+    批量从 GitLab 导入 Projects（Celery 异步任务）
+
+    Args:
+        items: 待导入项列表，每项包含:
+            - gitlab_project_id: GitLab Project ID
+            - project_id: 可选，业务项目 ID
+            - module_id: 可选，业务模块 ID
+        username: 创建人用户名
+    """
+    from django.db import IntegrityError
+    from .models import CodeRepository, Project, Module
+    from .services import GitLabService, DevOpsException
+
+    logger.info(f"[Celery] 开始批量导入 GitLab Projects: 共 {len(items)} 个, 操作人={username}")
+
+    gitlab = GitLabService()
+    success_count = 0
+    fail_count = 0
+    results = []
+
+    for item in items:
+        gitlab_project_id = item.get("gitlab_project_id")
+        project_id = item.get("project_id")
+        module_id = item.get("module_id")
+
+        logger.info(f"[Celery] 正在导入 GitLab Project {gitlab_project_id} ...")
+
+        # 1. 从 GitLab API 获取项目信息（抛出详细异常）
+        try:
+            project_info = gitlab.get_project(gitlab_project_id, raise_on_error=True)
+        except DevOpsException as e:
+            fail_count += 1
+            error_msg = f"GitLab API 错误: {e.message}"
+            results.append({
+                "gitlab_project_id": gitlab_project_id,
+                "status": "failed",
+                "message": error_msg,
+            })
+            logger.error(f"[Celery] {error_msg}")
+            continue
+
+        if not project_info:
+            fail_count += 1
+            results.append({
+                "gitlab_project_id": gitlab_project_id,
+                "status": "failed",
+                "message": "GitLab Project 不存在（API 返回空）"
+            })
+            logger.warning(f"[Celery] GitLab Project {gitlab_project_id} 不存在")
+            continue
+
+        project_path = project_info.get("path", "")
+        project_name = project_info.get("name", "")
+
+        # 2. 路径截断检查（兼容超长路径）
+        if len(project_path) > 256:
+            fail_count += 1
+            error_msg = f"仓库路径过长: {project_path} ({len(project_path)}字符，最大256)"
+            results.append({
+                "gitlab_project_id": gitlab_project_id,
+                "status": "failed",
+                "message": error_msg,
+            })
+            logger.error(f"[Celery] {error_msg}")
+            continue
+
+        # 3. 自动匹配项目和模块
+        project_obj = project_id_to_obj(project_id) if project_id else None
+        module_obj = module_id_to_obj(module_id) if module_id else None
+
+        if project_obj is None and module_obj is None:
+            namespace = project_info.get("namespace", {})
+            full_path = namespace.get("full_path", "")
+            if full_path:
+                path_parts = full_path.split("/")
+                if len(path_parts) >= 1:
+                    try:
+                        project_obj = Project.objects.get(code=path_parts[0], is_deleted=False)
+                    except Project.DoesNotExist:
+                        pass
+                    if project_obj and len(path_parts) >= 2:
+                        try:
+                            module_obj = Module.objects.get(
+                                project=project_obj, code=path_parts[1], is_deleted=False
+                            )
+                        except Module.DoesNotExist:
+                            pass
+
+        # 4. 开始导入
+        try:
+            # 检查是否已被软删除，是则恢复
+            deleted_repo = CodeRepository.objects.filter(
+                gitlab_project_id=gitlab_project_id, is_deleted=True
+            ).first()
+            if deleted_repo:
+                deleted_repo.is_deleted = False
+                deleted_repo.name = project_name
+                deleted_repo.code = project_path
+                deleted_repo.git_url = project_info.get("ssh_url_to_repo", "")
+                deleted_repo.git_http_url = project_info.get("http_url_to_repo", "")
+                deleted_repo.project = project_obj
+                deleted_repo.module = module_obj
+                deleted_repo.repository_type = 'gitlab'
+                try:
+                    deleted_repo.save()
+                except IntegrityError:
+                    fail_count += 1
+                    results.append({
+                        "gitlab_project_id": gitlab_project_id,
+                        "status": "failed",
+                        "message": f"恢复失败：项目下已存在同名代码仓库（{project_path}）"
+                    })
+                    logger.warning(f"[Celery] 恢复失败: {project_path} 已存在")
+                    continue
+                success_count += 1
+                results.append({
+                    "gitlab_project_id": gitlab_project_id,
+                    "status": "restored",
+                    "name": project_name
+                })
+                logger.info(f"[Celery] 恢复成功: {project_name}")
+            else:
+                repo = CodeRepository.objects.create(
+                    name=project_name,
+                    code=project_path,
+                    gitlab_project_id=gitlab_project_id,
+                    git_url=project_info.get("ssh_url_to_repo", ""),
+                    git_http_url=project_info.get("http_url_to_repo", ""),
+                    project=project_obj,
+                    module=module_obj,
+                    repository_type='gitlab',
+                    creator=username
+                )
+                success_count += 1
+                results.append({
+                    "gitlab_project_id": gitlab_project_id,
+                    "status": "success",
+                    "id": repo.id,
+                    "name": project_name
+                })
+                logger.info(f"[Celery] 导入成功: {project_name} (id={repo.id})")
+        except IntegrityError as e:
+            fail_count += 1
+            results.append({
+                "gitlab_project_id": gitlab_project_id,
+                "status": "failed",
+                "message": f"数据库约束冲突: {str(e)}"
+            })
+            logger.error(f"[Celery] 导入失败 (IntegrityError): gitlab_project_id={gitlab_project_id}, error={e}")
+        except Exception as e:
+            fail_count += 1
+            results.append({
+                "gitlab_project_id": gitlab_project_id,
+                "status": "failed",
+                "message": f"导入异常: {type(e).__name__}: {str(e)}"
+            })
+            logger.exception(f"[Celery] 导入异常: gitlab_project_id={gitlab_project_id}")
+
+    summary = f"批量导入完成: 成功 {success_count} 个, 失败 {fail_count} 个"
+    logger.info(f"[Celery] {summary}")
+    return {
+        "success": True,
+        "success_count": success_count,
+        "fail_count": fail_count,
+        "total": len(items),
+        "results": results,
+        "message": summary
+    }
+
+
+def project_id_to_obj(project_id):
+    """安全获取 Project 对象"""
+    if not project_id:
+        return None
+    from .models import Project
+    try:
+        return Project.objects.get(id=project_id, is_deleted=False)
+    except Project.DoesNotExist:
+        return None
+
+
+def module_id_to_obj(module_id):
+    """安全获取 Module 对象"""
+    if not module_id:
+        return None
+    from .models import Module
+    try:
+        return Module.objects.get(id=module_id, is_deleted=False)
+    except Module.DoesNotExist:
+        return None

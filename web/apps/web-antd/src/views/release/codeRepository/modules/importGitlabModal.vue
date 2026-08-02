@@ -1,7 +1,7 @@
 <script lang="ts" setup>
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 
-import { message, Spin } from 'ant-design-vue';
+import { Input, message, Pagination, Spin, Tag } from 'ant-design-vue';
 
 import { useVbenModal } from '@vben/common-ui';
 
@@ -25,19 +25,33 @@ const importing = ref(false);
 const projects = ref<GitLabProject[]>([]);
 const selectedIds = ref<number[]>([]);
 const searchText = ref('');
+const importedIds = ref<Set<number>>(new Set());
 
-async function fetchProjects() {
+// 分页
+const currentPage = ref(1);
+const total = ref(0);
+const pageSize = 50;
+
+async function fetchProjects(page: number = 1) {
   loading.value = true;
   try {
-    const data = await listGitLabProjects({ 
-      search: searchText.value, 
-      per_page: 50 
+    const result = await listGitLabProjects({
+      search: searchText.value,
+      page,
+      per_page: pageSize,
     });
-    projects.value = data || [];
+    console.log('[importGitlabModal] API response:', result);
+    projects.value = result.projects || [];
+    total.value = result.total || 0;
+    importedIds.value = new Set(result.imported_ids || []);
+    console.log('[importGitlabModal] projects count:', projects.value.length, 'total:', total.value, 'imported:', importedIds.value.size);
     selectedIds.value = [];
+    currentPage.value = page;
   } catch (error) {
+    console.error('[importGitlabModal] fetch error:', error);
     message.error('获取 GitLab Projects 失败');
     projects.value = [];
+    total.value = 0;
   } finally {
     loading.value = false;
   }
@@ -69,9 +83,25 @@ function resetForm() {
   selectedIds.value = [];
   searchText.value = '';
   projects.value = [];
+  currentPage.value = 1;
+  total.value = 0;
+  importedIds.value = new Set();
+}
+
+function onSearch() {
+  fetchProjects(1);
+}
+
+function onPageChange(page: number) {
+  fetchProjects(page);
+}
+
+function isImported(projectId: number): boolean {
+  return importedIds.value.has(projectId);
 }
 
 function toggleSelect(projectId: number) {
+  if (isImported(projectId)) return;
   const idx = selectedIds.value.indexOf(projectId);
   if (idx >= 0) {
     selectedIds.value.splice(idx, 1);
@@ -80,11 +110,18 @@ function toggleSelect(projectId: number) {
   }
 }
 
+// 未导入的项目列表
+const importableProjects = computed(() => projects.value.filter(p => !isImported(p.id)));
+const importableCount = computed(() => importableProjects.value.length);
+
 function selectAll() {
-  if (selectedIds.value.length === projects.value.length) {
+  const allSelected = importableProjects.value.every(p => selectedIds.value.includes(p.id));
+  if (allSelected) {
+    // 取消全选
     selectedIds.value = [];
   } else {
-    selectedIds.value = projects.value.map(p => p.id);
+    // 全选未导入的项目
+    selectedIds.value = importableProjects.value.map(p => p.id);
   }
 }
 
@@ -112,12 +149,12 @@ const [Modal, modalApi] = useVbenModal({
   >
     <div class="import-container">
       <div class="search-bar">
-        <a-input-search
+        <Input.Search
           v-model:value="searchText"
           placeholder="搜索 GitLab Projects"
           enter-button="搜索"
           :loading="loading"
-          @search="fetchProjects"
+          @search="onSearch"
         />
       </div>
 
@@ -125,12 +162,13 @@ const [Modal, modalApi] = useVbenModal({
         <label>
           <input 
             type="checkbox" 
-            :checked="projects.length > 0 && selectedIds.length === projects.length"
+            :checked="importableCount > 0 && selectedIds.length === importableCount"
+            :disabled="importableCount === 0"
             @change="selectAll"
           />
           全选
         </label>
-        <span>已选择 <a-tag color="blue">{{ selectedIds.length }}</a-tag> 个</span>
+        <span>已选择 <Tag color="blue">{{ selectedIds.length }}</Tag> 个</span>
       </div>
 
       <div class="list-box">
@@ -143,16 +181,20 @@ const [Modal, modalApi] = useVbenModal({
               v-for="project in projects" 
               :key="project.id" 
               class="list-item"
-              :class="{ selected: selectedIds.includes(project.id) }"
+              :class="{ selected: selectedIds.includes(project.id), imported: isImported(project.id) }"
             >
-              <label class="item-label">
+              <label class="item-label" :class="{ disabled: isImported(project.id) }">
                 <input 
                   type="checkbox" 
                   :checked="selectedIds.includes(project.id)"
+                  :disabled="isImported(project.id)"
                   @change="toggleSelect(project.id)"
                 />
                 <div class="item-content">
-                  <div class="item-name">{{ project.name }}</div>
+                  <div class="item-name">
+                    {{ project.name }}
+                    <Tag v-if="isImported(project.id)" color="success" size="small">已导入</Tag>
+                  </div>
                   <div class="item-path">{{ project.path_with_namespace }}</div>
                   <div v-if="project.description" class="item-desc">{{ project.description }}</div>
                 </div>
@@ -161,6 +203,17 @@ const [Modal, modalApi] = useVbenModal({
             </div>
           </template>
         </Spin>
+      </div>
+
+      <div v-if="total > pageSize" class="pagination-bar">
+        <Pagination
+          v-model:current="currentPage"
+          :total="total"
+          :page-size="pageSize"
+          :show-size-changer="false"
+          size="small"
+          @change="onPageChange"
+        />
       </div>
     </div>
   </Modal>
@@ -212,11 +265,18 @@ const [Modal, modalApi] = useVbenModal({
 .list-item.selected {
   background: #e6f7ff;
 }
+.list-item.imported {
+  background: #f9f9f9;
+}
 .item-label {
   display: flex;
   align-items: center;
   cursor: pointer;
   flex: 1;
+}
+.item-label.disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
 }
 .item-label input[type="checkbox"] {
   margin-right: 10px;
@@ -240,5 +300,10 @@ const [Modal, modalApi] = useVbenModal({
 }
 .item-link {
   font-size: 12px;
+}
+.pagination-bar {
+  display: flex;
+  justify-content: center;
+  margin-top: 12px;
 }
 </style>

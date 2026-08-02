@@ -83,8 +83,8 @@ class CodeRepository(models.Model):
         'Module', on_delete=models.SET_NULL,
         null=True, blank=True, related_name="code_repositories", verbose_name="所属模块"
     )
-    name = models.CharField(max_length=64, verbose_name="仓库名称")
-    code = models.CharField(max_length=32, verbose_name="仓库编码")
+    name = models.CharField(max_length=256, verbose_name="仓库名称")
+    code = models.CharField(max_length=256, verbose_name="仓库编码")
     repository_type = models.CharField(max_length=16, choices=TYPE_CHOICES, default='gitlab', verbose_name="仓库类型")
     gitlab_project_id = models.IntegerField(null=True, blank=True, verbose_name="GitLab Project ID")
     git_url = models.CharField(max_length=256, null=True, blank=True, verbose_name="Git SSH 地址")
