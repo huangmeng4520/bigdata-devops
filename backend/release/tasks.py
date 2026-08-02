@@ -155,6 +155,15 @@ def create_jenkins_resources(self, app_id: int, force: bool = False):
 
         created_jobs = []
         for config in configs:
+            # 已导入旧 job（通过 import_jenkins_jobs 脚本创建）已有 jenkins_job_name，
+            # 跳过创建，保持原始 job 名不变，避免在 Jenkins 上创建重复 job
+            if config.jenkins_job_name:
+                logger.info(
+                    f"[Celery] 跳过已导入 job 的创建: config_id={config.id}, "
+                    f"jenkins_job_name={config.jenkins_job_name}"
+                )
+                created_jobs.append(config.jenkins_job_name)
+                continue
             env_code = config.environment
             success = jenkins.create_pipeline_job_with_folder(
                 project_code=app.project.code,
@@ -548,21 +557,37 @@ def sync_jenkins_config(self, config_id):
                 content = content.replace(f'${{{key}}}', str(value))
 
         jenkins = JenkinsService()
-        module_code = app.module.code if app.module else app.code
-        folder = f"{app.project.code}/{module_code}/{app.code}"
+
+        # 区分已导入旧 job 和新建 job：
+        # - 旧 job（通过导入脚本创建）已有 jenkins_job_name，按原始路径同步，保持原名不变
+        # - 新建 job 用系统命名规则 folder=project.code/module.code/app.code, name=env_code
+        if config.jenkins_job_name:
+            parts = config.jenkins_job_name.split('/')
+            job_name = parts[-1]
+            folder = '/'.join(parts[:-1]) if len(parts) > 1 else None
+            logger.info(
+                f"[Celery] 已导入旧 job，按原始路径同步: "
+                f"jenkins_job_name={config.jenkins_job_name}, folder={folder}, name={job_name}"
+            )
+        else:
+            module_code = app.module.code if app.module else app.code
+            folder = f"{app.project.code}/{module_code}/{app.code}"
+            job_name = config.environment
+
         env_code = config.environment
+        module_name = app.module.name if app.module else app.name
 
         success = jenkins.update_job_config(
-            name=env_code,
+            name=job_name,
             folder=folder,
             jenkinsfile_content=content,
             git_url=app.git_url,
             branch=app.build_branch,
-            description=f"Pipeline for {app.project.name}/{module_code}/{app.name}/{env_code}"
+            description=f"Pipeline for {app.project.name}/{module_name}/{app.name}/{env_code}"
         )
 
         if success:
-            full_job_name = f"{folder}/{env_code}"
+            full_job_name = f"{folder}/{job_name}" if folder else job_name
             config.jenkins_job_name = full_job_name
             config.jenkins_sync_status = 2
             config.jenkins_sync_time = timezone.now()
@@ -609,10 +634,23 @@ def _sync_pipeline_config(jenkins, app, config, folder):
             content = content.replace(f'${{{key}}}', str(value))
 
     env_code = config.environment
-    job_name = env_code
-    job_folder = folder
-
     module_name = app.module.name if app.module else app.name
+
+    # 区分已导入旧 job 和新建 job：
+    # - 旧 job（通过导入脚本创建）已有 jenkins_job_name，按原始路径同步
+    # - 新建 job 用调用方传入的 folder + env_code 作为 name
+    if config.jenkins_job_name:
+        parts = config.jenkins_job_name.split('/')
+        job_name = parts[-1]
+        job_folder = '/'.join(parts[:-1]) if len(parts) > 1 else None
+        logger.info(
+            f"[Celery] 已导入旧 job，按原始路径同步: "
+            f"jenkins_job_name={config.jenkins_job_name}, folder={job_folder}, name={job_name}"
+        )
+    else:
+        job_name = env_code
+        job_folder = folder
+
     success = jenkins.update_job_config(
         name=job_name,
         folder=job_folder,
@@ -623,7 +661,7 @@ def _sync_pipeline_config(jenkins, app, config, folder):
     )
 
     if success:
-        full_job_name = f"{job_folder}/{job_name}"
+        full_job_name = f"{job_folder}/{job_name}" if job_folder else job_name
         config.jenkins_job_name = full_job_name
         config.jenkins_sync_status = 2
         config.jenkins_sync_time = timezone.now()

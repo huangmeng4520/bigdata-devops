@@ -162,8 +162,8 @@ class Application(CoreModel):
         null=True, blank=True,
         related_name="applications", verbose_name="所属模块"
     )
-    name = models.CharField(max_length=64, verbose_name="应用名称")
-    code = models.CharField(max_length=32, verbose_name="应用编码")
+    name = models.CharField(max_length=128, verbose_name="应用名称")
+    code = models.CharField(max_length=128, verbose_name="应用编码")
     description = models.CharField(max_length=256, null=True, blank=True, verbose_name="应用描述")
     app_type = models.CharField(max_length=16, choices=APP_TYPE_CHOICES, verbose_name="应用类型")
     # 代码仓库关联
