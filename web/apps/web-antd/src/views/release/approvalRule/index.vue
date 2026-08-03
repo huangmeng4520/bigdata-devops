@@ -8,7 +8,7 @@ import type { ApprovalRuleApi } from '#/api/release';
 import { Page, useVbenModal } from '@vben/common-ui';
 import { Plus } from '@vben/icons';
 
-import { message } from 'ant-design-vue';
+import { Button, message } from 'ant-design-vue';
 
 import { TableAction, useVbenVxeGrid } from '#/adapter/vxe-table';
 import { deleteApprovalRule, getApprovalRules } from '#/api/release';
@@ -137,14 +137,14 @@ function getActionButtons(_row: ApprovalRuleApi.ApprovalRule) {
   <Page auto-content-height>
     <Grid table-title="审批规则管理">
       <template #toolbar-tools>
-        <a-button
+        <Button
           v-if="hasPermission('release:approval_rule:create')"
           type="primary"
           @click="onCreate"
         >
           <Plus class="mr-1" />
           创建规则
-        </a-button>
+        </Button>
       </template>
       <template #action="{ row }">
         <TableAction :actions="getActionButtons(row)" @click="onActionClick" />

@@ -5,7 +5,18 @@ import { computed, ref, watch } from 'vue';
 
 import { useVbenModal } from '@vben/common-ui';
 
-import { message } from 'ant-design-vue';
+import {
+  Form,
+  FormItem,
+  Input,
+  InputNumber,
+  message,
+  Radio,
+  RadioGroup,
+  Select,
+  SelectOption,
+  Switch,
+} from 'ant-design-vue';
 
 import {
   createApprovalRule,
@@ -302,54 +313,54 @@ const statusOptions = [
 
 <template>
   <Modal :title="modalTitle" width="640px">
-    <a-form
+    <Form
       :model="formData"
       :label-col="{ span: 5 }"
       :wrapper-col="{ span: 18 }"
     >
       <!-- 规则名称 -->
-      <a-form-item
+      <FormItem
         label="规则名称"
         name="name"
         :rules="[{ required: true, message: '请输入规则名称' }]"
       >
-        <a-input v-model:value="formData.name" placeholder="请输入规则名称" />
-      </a-form-item>
+        <Input v-model:value="formData.name" placeholder="请输入规则名称" />
+      </FormItem>
 
       <!-- 规则编码 -->
-      <a-form-item
+      <FormItem
         label="规则编码"
         name="code"
         :rules="[{ required: true, message: '请输入规则编码' }]"
       >
-        <a-input
+        <Input
           v-model:value="formData.code"
           placeholder="如: prod-release-approval"
           :disabled="isEdit"
         />
-      </a-form-item>
+      </FormItem>
 
       <!-- 作用域 -->
-      <a-form-item label="作用域" name="scope">
-        <a-radio-group v-model:value="formData.scope">
-          <a-radio
+      <FormItem label="作用域" name="scope">
+        <RadioGroup v-model:value="formData.scope">
+          <Radio
             v-for="opt in scopeOptions"
             :key="opt.value"
             :value="opt.value"
           >
             {{ opt.label }}
-          </a-radio>
-        </a-radio-group>
-      </a-form-item>
+          </Radio>
+        </RadioGroup>
+      </FormItem>
 
       <!-- 项目（scope=project/application 时显示） -->
-      <a-form-item
+      <FormItem
         v-if="showProject"
         label="项目"
         name="project"
         :rules="[{ required: true, message: '请选择项目' }]"
       >
-        <a-select
+        <Select
           v-model:value="formData.project"
           :options="projectOptions"
           placeholder="请选择项目"
@@ -357,16 +368,16 @@ const statusOptions = [
           option-filter-prop="label"
           allow-clear
         />
-      </a-form-item>
+      </FormItem>
 
       <!-- 应用（scope=application 时显示） -->
-      <a-form-item
+      <FormItem
         v-if="showApplication"
         label="应用"
         name="application"
         :rules="[{ required: true, message: '请选择应用' }]"
       >
-        <a-select
+        <Select
           v-model:value="formData.application"
           :options="applicationOptions"
           :loading="appLoading"
@@ -375,28 +386,28 @@ const statusOptions = [
           option-filter-prop="label"
           allow-clear
         />
-      </a-form-item>
+      </FormItem>
 
       <!-- 环境 -->
-      <a-form-item
+      <FormItem
         label="环境"
         name="environment"
         :rules="[{ required: true, message: '请选择环境' }]"
       >
-        <a-select
+        <Select
           v-model:value="formData.environment"
           :options="ENVIRONMENT_OPTIONS"
           placeholder="请选择环境"
         />
-      </a-form-item>
+      </FormItem>
 
       <!-- 规则类型 -->
-      <a-form-item
+      <FormItem
         label="规则类型"
         name="rule_type"
         :rules="[{ required: true, message: '请选择规则类型' }]"
       >
-        <a-select
+        <Select
           v-model:value="formData.rule_type"
           :options="RULE_TYPE_OPTIONS"
           placeholder="请选择规则类型"
@@ -404,15 +415,15 @@ const statusOptions = [
         <div v-if="formData.rule_type === 'sequential'" class="form-tip">
           顺序审批：审批人按顺序依次审批，可在审批人列表中查看顺序
         </div>
-      </a-form-item>
+      </FormItem>
 
       <!-- 审批人 -->
-      <a-form-item
+      <FormItem
         label="审批人"
         name="approvers"
         :rules="[{ required: true, message: '请选择审批人' }]"
       >
-        <a-select
+        <Select
           v-model:value="selectedUserIds"
           mode="multiple"
           placeholder="输入用户名搜索并选择审批人"
@@ -420,7 +431,7 @@ const statusOptions = [
           :loading="userSearchLoading"
           @search="handleUserSearch"
         >
-          <a-select-option
+          <SelectOption
             v-for="user in userOptions"
             :key="user.id"
             :value="user.id"
@@ -430,71 +441,71 @@ const statusOptions = [
               <span class="username">{{ user.nickname || user.username }}</span>
               <span v-if="user.email" class="email">{{ user.email }}</span>
             </div>
-          </a-select-option>
-        </a-select>
+          </SelectOption>
+        </Select>
         <div class="form-tip">
           已选择 {{ selectedUserIds.length }} 位审批人
         </div>
-      </a-form-item>
+      </FormItem>
 
       <!-- 最少通过人数（rule_type=any 时显示） -->
-      <a-form-item
+      <FormItem
         v-if="showMinApprovers"
         label="最少通过人数"
         name="min_approvers"
         :rules="[{ required: true, message: '请填写最少通过人数' }]"
       >
-        <a-input-number
+        <InputNumber
           v-model:value="formData.min_approvers"
           :min="1"
           :max="selectedUserIds.length || 99"
           style="width: 100%"
         />
-      </a-form-item>
+      </FormItem>
 
       <!-- 超时小时数 -->
-      <a-form-item label="超时(小时)" name="timeout_hours">
-        <a-input-number
+      <FormItem label="超时(小时)" name="timeout_hours">
+        <InputNumber
           v-model:value="formData.timeout_hours"
           :min="1"
           :max="720"
           style="width: 100%"
         />
-      </a-form-item>
+      </FormItem>
 
       <!-- 超时策略 -->
-      <a-form-item label="超时策略" name="timeout_action">
-        <a-select
+      <FormItem label="超时策略" name="timeout_action">
+        <Select
           v-model:value="formData.timeout_action"
           :options="TIMEOUT_ACTION_OPTIONS"
           placeholder="请选择超时策略"
         />
-      </a-form-item>
+      </FormItem>
 
       <!-- 通知渠道 -->
-      <a-form-item label="通知渠道" name="notify_channels">
-        <a-select
+      <FormItem label="通知渠道" name="notify_channels">
+        <Select
           v-model:value="formData.notify_channels"
           mode="multiple"
           :options="NOTIFY_CHANNEL_OPTIONS"
           placeholder="请选择通知渠道"
         />
-      </a-form-item>
+      </FormItem>
 
       <!-- 是否默认 -->
-      <a-form-item label="默认规则" name="is_default">
-        <a-switch v-model:checked="formData.is_default" />
-      </a-form-item>
+      <FormItem label="默认规则" name="is_default">
+        <Switch v-model:checked="formData.is_default" />
+      </FormItem>
 
       <!-- 状态 -->
-      <a-form-item label="状态" name="status">
-        <a-select
+      <FormItem label="状态" name="status">
+        <Select
           v-model:value="formData.status"
           :options="statusOptions"
           placeholder="请选择状态"
         />
-      </a-form-item>
-    </a-form>
+      </FormItem>
+    </Form>
   </Modal>
 </template>
 
