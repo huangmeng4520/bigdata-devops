@@ -208,6 +208,11 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'system.tasks.sync_temu_order',  # 任务路径
         'schedule': 60,  # 每1分钟执行一次
     },
+    # 审批超时扫描：每5分钟检查一次待审批单是否超时
+    'check-approval-timeout': {
+        'task': 'release.tasks.check_approval_timeout',
+        'schedule': 300,
+    },
 }
 # celery 配置结束
 

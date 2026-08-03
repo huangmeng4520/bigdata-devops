@@ -102,6 +102,23 @@ export interface ReleaseRecord {
   released_by: string;
   create_time: string;
   update_time: string;
+  // ===== 应用×环境级审批机制扩展字段（可选） =====
+  /** 审批作用域：application/project/global */
+  approval_scope?: 'application' | 'global' | 'project';
+  /** 已通过审批数 */
+  approved_count?: number;
+  /** 需要通过审批数 */
+  required_count?: number;
+  /** 当前待审批人 id 列表 */
+  current_approver_ids?: number[];
+  /** 审批截止时间 */
+  approval_deadline?: string;
+  /** 审批规则名称 */
+  approval_rule_name?: string;
+  /** 审批规则编码 */
+  approval_rule_code?: string;
+  /** 规则类型展示文案 */
+  rule_type_display?: string;
 }
 
 // 发布状态映射

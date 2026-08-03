@@ -68,6 +68,16 @@ const routes: RouteRecordRaw[] = [
         },
         component: () => import('#/views/release/environmentStrategy/index.vue'),
       },
+      // 审批规则
+      {
+        path: '/release/approval-rule',
+        name: 'ReleaseApprovalRule',
+        meta: {
+          icon: 'mdi:clipboard-check-outline',
+          title: '审批规则',
+        },
+        component: () => import('#/views/release/approvalRule/index.vue'),
+      },
       // 发布记录
       {
         path: '/release/record',

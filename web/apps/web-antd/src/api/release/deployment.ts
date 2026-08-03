@@ -67,32 +67,6 @@ export function getAppEnvironments(appId: number) {
 }
 
 // ============================================================
-// 审批规则 API
-// ============================================================
-
-/** 获取审批规则列表 */
-export function getApprovalRules(params?: { environment?: string }) {
-  return requestClient.get('/release/approval-rules/list/', { params });
-}
-
-/** 审批规则 CRUD */
-export function getApprovalRuleList(params?: any) {
-  return requestClient.get('/release/approval-rules/', { params });
-}
-
-export function createApprovalRule(data: any) {
-  return requestClient.post('/release/approval-rules/', data);
-}
-
-export function updateApprovalRule(id: number, data: any) {
-  return requestClient.put(`/release/approval-rules/${id}/`, data);
-}
-
-export function deleteApprovalRule(id: number) {
-  return requestClient.delete(`/release/approval-rules/${id}/`);
-}
-
-// ============================================================
 // 用户 API
 // ============================================================
 
@@ -171,17 +145,6 @@ export interface Branch {
     message: string;
     author_name: string;
   };
-}
-
-export interface ApprovalRule {
-  id: number;
-  name: string;
-  code: string;
-  environment: string;
-  rule_type: 'single' | 'any' | 'all' | 'sequential';
-  approvers: Array<{ id: number; name: string; order?: number }>;
-  min_approvers: number;
-  status: number;
 }
 
 export interface UserOption {

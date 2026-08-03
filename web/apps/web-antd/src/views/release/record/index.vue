@@ -27,6 +27,7 @@ import {
   RELEASE_STATUS_MAP,
   retryBuild,
 } from '#/api/release/record';
+import { getMyApprovalTasks } from '#/api/release';
 import { hasPermission } from '#/utils/permission';
 
 import ApprovalModal from './modules/ApprovalModal.vue';
@@ -40,6 +41,9 @@ const searchForm = reactive({
   released_by: '',
   dateRange: [] as any[],
 });
+
+// 是否处于"我的待办"模式
+const myTodoMode = ref(false);
 
 // 分页
 const pagination = reactive({
@@ -111,10 +115,20 @@ const columns: TableColumnsType = [
   {
     title: '审批状态',
     dataIndex: 'require_approval',
-    width: 100,
+    width: 120,
     customRender: ({ record }) => {
       if (!record.require_approval) return '-';
       if (record.status === 'approval_pending') {
+        // 待审批时显示 X/Y 进度（approved_count/required_count）
+        const approved = record.approved_count ?? 0;
+        const required = record.required_count ?? 0;
+        if (required > 0) {
+          return h(
+            Tag,
+            { color: 'warning' },
+            () => `待审批 ${approved}/${required}`,
+          );
+        }
         return h(Tag, { color: 'warning' }, () => '待审批');
       }
       if (record.approval_user) {
@@ -167,7 +181,10 @@ async function loadData() {
       params.end_date = searchForm.dateRange[1].format('YYYY-MM-DD');
     }
 
-    const res = await getReleaseList(params);
+    // 我的待办模式调用独立接口，否则调用发布记录列表
+    const res = myTodoMode.value
+      ? await getMyApprovalTasks(params)
+      : await getReleaseList(params);
     // 后端返回格式: {total: number, items: [...]}
     tableData.value = res.items || [];
     pagination.total = res.total || 0;
@@ -177,6 +194,13 @@ async function loadData() {
   } finally {
     loading.value = false;
   }
+}
+
+// 切换"我的待办"模式
+function toggleMyTodo() {
+  myTodoMode.value = !myTodoMode.value;
+  pagination.current = 1;
+  loadData();
 }
 
 // 搜索
@@ -194,6 +218,7 @@ function handleReset() {
     released_by: '',
     dateRange: [],
   });
+  myTodoMode.value = false;
   pagination.current = 1;
   loadData();
 }
@@ -346,6 +371,14 @@ onMounted(() => {
         <Form.Item>
           <Button type="primary" @click="handleSearch">查询</Button>
           <Button style="margin-left: 8px" @click="handleReset">重置</Button>
+          <Button
+            :type="myTodoMode ? 'primary' : 'default'"
+            :danger="myTodoMode"
+            style="margin-left: 8px"
+            @click="toggleMyTodo"
+          >
+            {{ myTodoMode ? '退出我的待办' : '我的待办' }}
+          </Button>
         </Form.Item>
       </Form>
     </Card>
@@ -376,7 +409,7 @@ onMounted(() => {
               v-if="
                 canApprove(record) && hasPermission('release:release_record:approve')
               "
-              type="link"
+              :type="myTodoMode ? 'primary' : 'link'"
               size="small"
               @click="handleApprove(record, 'approve')"
             >
@@ -386,7 +419,7 @@ onMounted(() => {
               v-if="
                 canApprove(record) && hasPermission('release:release_record:reject')
               "
-              type="link"
+              :type="myTodoMode ? 'primary' : 'link'"
               size="small"
               danger
               @click="handleApprove(record, 'reject')"

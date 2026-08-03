@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { ReleaseApplicationApi } from '#/api/release';
+import type { ApprovalRuleApi, ReleaseApplicationApi } from '#/api/release';
 
 import { computed, ref, watch } from 'vue';
 
@@ -9,12 +9,9 @@ import { message, Spin, Tag, Input, Select, SelectOption, Textarea } from 'ant-d
 
 import {
   type Environment,
-  type ApprovalRule,
   type ReleaseParams,
-  type UserOption,
   getAppEnvironments,
-  getApprovalRules,
-  getUserList,
+  getEffectiveRule,
   triggerRelease,
 } from '#/api/release';
 
@@ -50,12 +47,10 @@ const submitting = ref(false);
 
 // 环境列表
 const environments = ref<Environment[]>([]);
-// 审批规则
-const approvalRules = ref<ApprovalRule[]>([]);
-// 用户列表（审批人）
-const userOptions = ref<UserOption[]>([]);
-// 用户搜索状态
-const userSearchLoading = ref(false);
+
+// 匹配到的生效审批规则（只读展示）
+const effectiveRule = ref<ApprovalRuleApi.ApprovalRule | null>(null);
+const ruleLoading = ref(false);
 
 // 表单数据
 const formData = ref<ReleaseParams>({
@@ -73,7 +68,7 @@ const selectedEnv = computed(() => {
   return environments.value.find((e) => e.code === formData.value.environment);
 });
 
-// 监听环境变化，自动设置是否需要审批
+// 监听环境变化，自动判断是否需要审批并加载生效规则
 watch(
   () => formData.value.environment,
   (env) => {
@@ -81,11 +76,14 @@ watch(
       const envInfo = environments.value.find((e) => e.code === env);
       if (envInfo?.requires_approval) {
         formData.value.require_approval = true;
-        // 加载该环境的审批规则
-        loadApprovalRules(env);
+        // 调用生效规则接口匹配当前应用+环境的审批规则
+        loadEffectiveRule(env);
       } else {
         formData.value.require_approval = false;
+        effectiveRule.value = null;
       }
+    } else {
+      effectiveRule.value = null;
     }
   },
 );
@@ -121,47 +119,33 @@ async function loadData() {
   }
 }
 
-// 加载审批规则
-async function loadApprovalRules(environment: string) {
+// 加载生效审批规则（应用×环境级匹配）
+async function loadEffectiveRule(environment: string) {
+  if (!application.value) return;
+  ruleLoading.value = true;
+  effectiveRule.value = null;
   try {
-    const res = await getApprovalRules({ environment });
-    approvalRules.value = res || [];
-    
-    // 如果有默认规则，自动选择
-    if (approvalRules.value.length > 0) {
-      formData.value.approval_type = approvalRules.value[0].code;
-      // 预设审批人
-      if (approvalRules.value[0].approvers?.length > 0) {
-        formData.value.approvers = approvalRules.value[0].approvers.map((a: any) => ({
-          id: a.id,
-          name: a.name,
-        }));
-      }
+    const rule = await getEffectiveRule({
+      application_id: application.value.id,
+      environment,
+    });
+    effectiveRule.value = rule || null;
+    // 将匹配到的规则信息回填到表单，便于提交时携带
+    if (rule) {
+      formData.value.approval_type = rule.code;
+      formData.value.approvers = (rule.approvers || []).map((a) => ({
+        id: a.user_id,
+        name: a.username,
+      }));
+    } else {
+      formData.value.approval_type = '';
+      formData.value.approvers = [];
     }
   } catch (error) {
     console.error('加载审批规则失败', error);
-  }
-}
-
-// 搜索用户
-async function handleUserSearch(value: string) {
-  if (!value || value.length < 1) {
-    return;
-  }
-  
-  userSearchLoading.value = true;
-  try {
-    const res = await getUserList({ username: value, page_size: 20 });
-    userOptions.value = (res.results || []).map((user: any) => ({
-      id: user.id,
-      username: user.username,
-      nickname: user.nickname || user.username,
-      email: user.email || '',
-    }));
-  } catch (error) {
-    console.error('搜索用户失败', error);
+    effectiveRule.value = null;
   } finally {
-    userSearchLoading.value = false;
+    ruleLoading.value = false;
   }
 }
 
@@ -178,10 +162,7 @@ async function handleConfirm() {
     message.warning('请选择目标环境');
     return false;
   }
-  if (formData.value.require_approval && formData.value.approvers.length === 0) {
-    message.warning('请选择审批人');
-    return false;
-  }
+  // 需要审批但未匹配到规则时，按免审直发处理（后端会再次校验）
 
   submitting.value = true;
   try {
@@ -194,10 +175,10 @@ async function handleConfirm() {
       remark: formData.value.remark || '',
     };
     // 版本号：始终传递，即使为空
-  if (formData.value.version) {
-    submitData.version = formData.value.version;
-  }
-    // 审批类型
+    if (formData.value.version) {
+      submitData.version = formData.value.version;
+    }
+    // 审批类型（匹配到的规则编码）
     if (formData.value.approval_type) {
       submitData.approval_type = formData.value.approval_type;
     }
@@ -248,9 +229,15 @@ function resetForm() {
     approvers: [],
     remark: '',
   };
-  approvalRules.value = [];
-  userOptions.value = [];
+  effectiveRule.value = null;
 }
+
+// 作用域中文映射
+const scopeLabelMap: Record<string, string> = {
+  application: '应用级',
+  project: '项目级',
+  global: '全局',
+};
 </script>
 
 <template>
@@ -325,57 +312,50 @@ function resetForm() {
           />
         </div>
 
-        <!-- 审批设置 -->
+        <!-- 审批规则只读展示（当环境需要审批时） -->
         <template v-if="formData.require_approval">
           <div class="form-item">
-            <label>审批类型</label>
-            <Select
-              v-model:value="formData.approval_type"
-              placeholder="选择审批类型"
-              style="width: 100%"
-              @change="(val: string) => {
-                const rule = approvalRules.find(r => r.code === val);
-                if (rule?.approvers?.length) {
-                  formData.approvers = rule.approvers.map(a => ({ id: a.id, name: a.name }));
-                }
-              }"
-            >
-              <SelectOption
-                v-for="rule in approvalRules"
-                :key="rule.code"
-                :value="rule.code"
-              >
-                {{ rule.name }} ({{ rule.rule_type }})
-              </SelectOption>
-            </Select>
-          </div>
-
-          <div class="form-item">
-            <label class="required">审批人</label>
-            <Select
-              v-model:value="formData.approvers"
-              mode="multiple"
-              placeholder="输入用户名搜索并选择审批人"
-              style="width: 100%"
-              :filter-option="false"
-              :loading="userSearchLoading"
-              @search="handleUserSearch"
-            >
-              <SelectOption
-                v-for="user in userOptions"
-                :key="user.id"
-                :value="user.id"
-                :label="user.nickname || user.username"
-              >
-                <div class="user-option">
-                  <span class="username">{{ user.nickname || user.username }}</span>
-                  <span class="email" v-if="user.email">{{ user.email }}</span>
+            <label>审批规则</label>
+            <Spin :spinning="ruleLoading">
+              <div v-if="effectiveRule" class="rule-info">
+                <div class="rule-row">
+                  <span class="rule-label">规则名称：</span>
+                  <span class="rule-value">{{ effectiveRule.name }}</span>
+                  <Tag color="blue" style="margin-left: 8px;">
+                    {{ scopeLabelMap[effectiveRule.scope] || effectiveRule.scope }}
+                  </Tag>
                 </div>
-              </SelectOption>
-            </Select>
-            <div class="form-tip">
-              已选择 {{ formData.approvers.length }} 位审批人
-            </div>
+                <div class="rule-row">
+                  <span class="rule-label">规则类型：</span>
+                  <span class="rule-value">{{ effectiveRule.rule_type_display || effectiveRule.rule_type }}</span>
+                </div>
+                <div class="rule-row">
+                  <span class="rule-label">审批人：</span>
+                  <span class="rule-value">
+                    <Tag
+                      v-for="approver in effectiveRule.approvers"
+                      :key="approver.user_id"
+                      style="margin-right: 4px; margin-bottom: 4px;"
+                    >
+                      {{ approver.username }}
+                      <span v-if="effectiveRule.rule_type === 'sequential'" style="color: #999; font-size: 11px;">
+                        (#{{ approver.order }})
+                      </span>
+                    </Tag>
+                  </span>
+                </div>
+                <div v-if="effectiveRule.min_approvers" class="rule-row">
+                  <span class="rule-label">最少通过：</span>
+                  <span class="rule-value">{{ effectiveRule.min_approvers }} 人</span>
+                </div>
+              </div>
+              <a-alert
+                v-else-if="!ruleLoading"
+                type="warning"
+                show-icon
+                message="该环境未配置审批规则，将免审直发"
+              />
+            </Spin>
           </div>
         </template>
 
@@ -477,5 +457,34 @@ function resetForm() {
   margin-top: 4px;
   color: #999;
   font-size: 12px;
+}
+
+.rule-info {
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.rule-row {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 8px;
+  line-height: 1.8;
+}
+
+.rule-row:last-child {
+  margin-bottom: 0;
+}
+
+.rule-label {
+  color: #666;
+  width: 80px;
+  flex-shrink: 0;
+}
+
+.rule-value {
+  font-weight: 500;
+  flex: 1;
 }
 </style>

@@ -6,20 +6,23 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from django.core.exceptions import PermissionDenied
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 
 from ..models import (
-    ReleaseRecord, ReleaseBuildLog, ApprovalRule, Application,
+    ReleaseRecord, ReleaseBuildLog, ApprovalRule, ApprovalRecord, Application,
     ApplicationPipelineConfig, EnvironmentStrategy
 )
 from ..serializers import (
     ReleaseRecordSerializer, ReleaseCreateSerializer,
     ReleaseBuildLogSerializer,
     ApprovalRuleSerializer, ApprovalRuleCreateSerializer,
-    ApprovalActionSerializer
+    ApprovalActionSerializer, ApprovalRecordSerializer
 )
 from ..filters import ReleaseRecordFilter, ReleaseBuildLogFilter, ApprovalRuleFilter
+from ..approval_engine import ApprovalEngine
+from ..notifications import notify_approval_pending, notify_approval_result
 from utils.custom_model_viewSet import CustomModelViewSet
 from utils.data_permission import (
     DataPermissionMixin, user_has_scope_access, user_has_button_perm
@@ -147,7 +150,7 @@ class ReleaseRecordViewSet(DataPermissionMixin, CustomModelViewSet):
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def approve(self, request, pk=None):
-        """审批通过"""
+        """审批通过（走审批引擎，支持多人流转）"""
         release = self.get_object()
 
         if not release.can_approve():
@@ -159,20 +162,35 @@ class ReleaseRecordViewSet(DataPermissionMixin, CustomModelViewSet):
         serializer = ApprovalActionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        release.status = 'approved'
-        release.approval_time = timezone.now()
-        release.approval_user = request.user.username
-        release.approval_comment = serializer.validated_data.get('comment', '')
-        release.save(update_fields=['status', 'approval_time', 'approval_user', 'approval_comment'])
+        engine = ApprovalEngine(release)
+        try:
+            result = engine.apply_approval(
+                user=request.user, approved=True,
+                comment=serializer.validated_data.get('comment', ''),
+            )
+        except PermissionDenied as e:
+            return Response({"error": str(e)}, status=status.HTTP_403_FORBIDDEN)
 
+        # 通知发布人
+        if result in ('approved', 'rejected'):
+            notify_approval_result(release, request.user, approved=True)
+
+        msg_map = {
+            'approved': '审批通过，已自动触发构建',
+            'pending': '已记录您的审批，等待其他审批人',
+        }
         return Response({
-            "message": "审批通过",
-            "status": release.status
+            "message": msg_map.get(result, '审批完成'),
+            "status": release.status,
+            "result": result,
+            "approved_count": release.approved_count,
+            "required_count": release.required_count,
+            "current_approver_ids": release.current_approver_ids,
         })
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def reject(self, request, pk=None):
-        """审批拒绝"""
+        """审批拒绝（任一审批人拒绝即终止）"""
         release = self.get_object()
 
         if not release.can_approve():
@@ -184,16 +202,57 @@ class ReleaseRecordViewSet(DataPermissionMixin, CustomModelViewSet):
         serializer = ApprovalActionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        release.status = 'rejected'
-        release.approval_time = timezone.now()
-        release.approval_user = request.user.username
-        release.approval_comment = serializer.validated_data.get('comment', '')
-        release.save(update_fields=['status', 'approval_time', 'approval_user', 'approval_comment'])
+        engine = ApprovalEngine(release)
+        try:
+            result = engine.apply_approval(
+                user=request.user, approved=False,
+                comment=serializer.validated_data.get('comment', ''),
+            )
+        except PermissionDenied as e:
+            return Response({"error": str(e)}, status=status.HTTP_403_FORBIDDEN)
+
+        notify_approval_result(release, request.user, approved=False)
 
         return Response({
             "message": "审批已拒绝",
-            "status": release.status
+            "status": release.status,
+            "result": result,
         })
+
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
+    def approval_progress(self, request, pk=None):
+        """审批进度：规则、已通过/待审批人、历史记录"""
+        release = self.get_object()
+        records = release.approval_records.order_by('order', 'acted_at')
+        return Response({
+            "code": 0,
+            "data": {
+                "status": release.status,
+                "rule_type": release.approval_type,
+                "scope": release.approval_scope,
+                "rule_name": release.approval_rule.name if release.approval_rule else None,
+                "rule_code": release.approval_rule.code if release.approval_rule else None,
+                "approved_count": release.approved_count,
+                "required_count": release.required_count,
+                "current_approver_ids": release.current_approver_ids,
+                "deadline": release.approval_deadline,
+                "approvers": release.approvers,
+                "history": ApprovalRecordSerializer(records, many=True).data,
+            }
+        })
+
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def my_approval_tasks(self, request):
+        """我的审批待办：当前用户是 current_approver_ids 之一的待审批单"""
+        from django.db.models import Q
+        qs = self.get_queryset().filter(
+            status='approval_pending'
+        ).filter(
+            Q(current_approver_ids__contains=request.user.id)
+        ).order_by('-create_time')
+        page = self.paginate_queryset(qs)
+        serializer = self.get_serializer(page, many=True)
+        return self.get_paginated_response(serializer.data)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def retry(self, request, pk=None):
@@ -289,7 +348,7 @@ class ReleaseRecordViewSet(DataPermissionMixin, CustomModelViewSet):
 
 class ApprovalRuleViewSet(CustomModelViewSet):
     """审批规则视图集"""
-    queryset = ApprovalRule.objects.all()
+    queryset = ApprovalRule.objects.filter(is_deleted=False)
     serializer_class = ApprovalRuleSerializer
     filterset_class = ApprovalRuleFilter
     permission_classes = [IsAuthenticated, HasMutateButtonPermission]
@@ -298,6 +357,66 @@ class ApprovalRuleViewSet(CustomModelViewSet):
         if self.action in ['create', 'update', 'partial_update']:
             return ApprovalRuleCreateSerializer
         return ApprovalRuleSerializer
+
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def by_scope(self, request):
+        """按作用域查询规则（前端配置页合并视图用）
+
+        GET /api/admin/release/approval-rules/by_scope/?project_id=1&application_id=2&environment=production
+        返回：应用级 + 项目级 + 全局规则，前端可展示三级继承视图
+        """
+        from django.db.models import Q
+        project_id = request.query_params.get('project_id')
+        application_id = request.query_params.get('application_id')
+        environment = request.query_params.get('environment')
+
+        qs = ApprovalRule.objects.filter(is_deleted=False, status=1)
+        if environment:
+            qs = qs.filter(environment=environment)
+
+        if application_id:
+            qs = qs.filter(
+                Q(application_id=application_id)
+                | Q(project_id=project_id, application__isnull=True)
+                | Q(project__isnull=True, application__isnull=True)
+            )
+        elif project_id:
+            qs = qs.filter(
+                Q(project_id=project_id, application__isnull=True)
+                | Q(project__isnull=True, application__isnull=True)
+            )
+
+        qs = qs.order_by('application_id', 'project_id', '-create_time')
+        serializer = self.get_serializer(qs, many=True)
+        return Response({"code": 0, "data": serializer.data})
+
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def effective(self, request):
+        """查询某应用某环境的生效规则（审批引擎匹配结果预览）
+
+        GET /api/admin/release/approval-rules/effective/?application_id=2&environment=production
+        """
+        app_id = request.query_params.get('application_id')
+        env = request.query_params.get('environment')
+        if not app_id or not env:
+            return Response(
+                {"error": "application_id 和 environment 为必填"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        app = get_object_or_404(Application, pk=app_id)
+        # 临时构造 release 用于匹配（不落库）
+        tmp = ReleaseRecord(application=app, environment=env)
+        rule, scope = ApprovalEngine._match_rule(tmp)
+
+        return Response({
+            "code": 0,
+            "data": {
+                "scope": scope,
+                "rule": ApprovalRuleSerializer(rule).data if rule else None,
+                "message": "匹配到规则" if rule else "无规则，将免审直发",
+            }
+        })
 
 
 # ============================================================
@@ -340,17 +459,13 @@ def trigger_release(request, app_id):
     data = serializer.validated_data
     branch = data['branch']
     environment = data['environment']
-    require_approval = data.get('require_approval', False)
 
-    # 获取环境策略
+    # 获取环境策略：决定是否需要审批
     strategy = EnvironmentStrategy.objects.filter(
         environment=environment,
         status=1  # 启用状态
     ).first()
-
-    # 如果环境策略要求审批，自动设置
-    if strategy and strategy.requires_approval:
-        require_approval = True
+    require_approval = bool(strategy and strategy.requires_approval)
 
     # 创建发布记录
     release = ReleaseRecord.objects.create(
@@ -359,36 +474,44 @@ def trigger_release(request, app_id):
         environment=environment,
         version=data.get('version') or None,
         require_approval=require_approval,
-        approval_type=data.get('approval_type'),
-        approvers=data.get('approvers', []),
-        status='approval_pending' if require_approval else 'pending',
+        status='pending',
         released_by=request.user.username,
         remark=data.get('remark', '')
     )
 
-    # 如果不需要审批，直接触发构建
-    if not require_approval:
-        from ..services import JenkinsService, DevOpsException
+    # 需要审批 → 走审批引擎（三级作用域规则匹配）
+    if require_approval:
+        engine = ApprovalEngine.init_for_release(release)
+        if engine:
+            # 已匹配到规则，进入待审批
+            notify_approval_pending(release)
+            return Response({
+                "code": 0,
+                "data": {
+                    "id": release.id,
+                    "status": "approval_pending",
+                    "status_display": release.get_status_display(),
+                    "scope": release.approval_scope,
+                    "rule": release.approval_rule.code if release.approval_rule else None,
+                    "rule_name": release.approval_rule.name if release.approval_rule else None,
+                    "current_approver_ids": release.current_approver_ids,
+                    "required_count": release.required_count,
+                    "message": "发布已创建，等待审批"
+                }
+            })
+        # 未匹配到规则 → 降级为免审直发
+        release.require_approval = False
+        release.save(update_fields=['require_approval'])
 
-        # 先同步检查 Jenkins 是否可用
-        try:
-            jenkins = JenkinsService()
-            if not jenkins.test_connection():
-                release.status = 'build_failed'
-                release.status_message = 'Jenkins 服务不可用，请检查配置'
-                release.save(update_fields=['status', 'status_message'])
-                return Response({
-                    "code": 1,
-                    "data": {
-                        "id": release.id,
-                        "status": "build_failed",
-                        "status_display": release.get_status_display(),
-                        "message": "Jenkins 服务不可用，请检查配置"
-                    }
-                })
-        except DevOpsException as e:
+    # 免审 → 直接触发构建
+    from ..services import JenkinsService, DevOpsException
+
+    # 先同步检查 Jenkins 是否可用
+    try:
+        jenkins = JenkinsService()
+        if not jenkins.test_connection():
             release.status = 'build_failed'
-            release.status_message = f'Jenkins 连接失败: {e.message}'
+            release.status_message = 'Jenkins 服务不可用，请检查配置'
             release.save(update_fields=['status', 'status_message'])
             return Response({
                 "code": 1,
@@ -396,34 +519,44 @@ def trigger_release(request, app_id):
                     "id": release.id,
                     "status": "build_failed",
                     "status_display": release.get_status_display(),
-                    "message": f"Jenkins 连接失败: {e.message}"
+                    "message": "Jenkins 服务不可用，请检查配置"
                 }
             })
+    except DevOpsException as e:
+        release.status = 'build_failed'
+        release.status_message = f'Jenkins 连接失败: {e.message}'
+        release.save(update_fields=['status', 'status_message'])
+        return Response({
+            "code": 1,
+            "data": {
+                "id": release.id,
+                "status": "build_failed",
+                "status_display": release.get_status_display(),
+                "message": f"Jenkins 连接失败: {e.message}"
+            }
+        })
 
-        # 触发异步构建
-        from ..tasks import trigger_jenkins_build
-        try:
-            trigger_jenkins_build.delay(release.id)
-            release.status = 'building'
-            release.save(update_fields=['status'])
-            status = 'building'
-            message = '发布已创建，构建已触发'
-        except Exception as e:
-            # Jenkins/Celery 服务异常
-            release.status = 'build_failed'
-            release.status_message = f'触发构建失败: {str(e)}'
-            release.save(update_fields=['status', 'status_message'])
-            status = 'build_failed'
-            message = f'发布已创建，但触发构建失败: {str(e)}'
-    else:
-        status = 'approval_pending'
-        message = '发布已创建，等待审批'
+    # 触发异步构建
+    from ..tasks import trigger_jenkins_build
+    try:
+        trigger_jenkins_build.delay(release.id)
+        release.status = 'building'
+        release.save(update_fields=['status'])
+        resp_status = 'building'
+        message = '发布已创建，构建已触发'
+    except Exception as e:
+        # Jenkins/Celery 服务异常
+        release.status = 'build_failed'
+        release.status_message = f'触发构建失败: {str(e)}'
+        release.save(update_fields=['status', 'status_message'])
+        resp_status = 'build_failed'
+        message = f'发布已创建，但触发构建失败: {str(e)}'
 
     return Response({
         "code": 0,
         "data": {
             "id": release.id,
-            "status": status,
+            "status": resp_status,
             "status_display": release.get_status_display(),
             "message": message
         }

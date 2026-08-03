@@ -8,7 +8,7 @@ from .models import (
     PipelineTemplate, PipelineTemplateVersion,
     ApplicationPipelineConfig, ApplicationPipelineVersion,
     EnvironmentStrategy,
-    ReleaseRecord, ReleaseBuildLog, ApprovalRule
+    ReleaseRecord, ReleaseBuildLog, ApprovalRule, ApprovalRecord
 )
 
 
@@ -423,6 +423,9 @@ class ReleaseRecordSerializer(serializers.ModelSerializer):
     module_name = serializers.CharField(source="application.module.name", read_only=True)
     environment_display = serializers.CharField(source='get_environment_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
+    approval_rule_name = serializers.CharField(source="approval_rule.name", read_only=True)
+    approval_rule_code = serializers.CharField(source="approval_rule.code", read_only=True, default=None)
+    rule_type_display = serializers.SerializerMethodField()
 
     class Meta:
         model = ReleaseRecord
@@ -432,7 +435,14 @@ class ReleaseRecordSerializer(serializers.ModelSerializer):
             "jenkins_build_number", "jenkins_build_url", "jenkins_build_status",
             "jenkins_build_duration", "docker_image", "artifact_url",
             "conversation_id",
+            "approval_rule", "approval_scope", "approved_count",
+            "required_count", "current_approver_ids", "approval_deadline",
         ]
+
+    def get_rule_type_display(self, obj):
+        if obj.approval_rule:
+            return obj.approval_rule.get_rule_type_display()
+        return None
 
 
 class ReleaseCreateSerializer(serializers.Serializer):
@@ -471,6 +481,10 @@ class ApprovalRuleSerializer(serializers.ModelSerializer):
     """审批规则序列化器"""
     rule_type_display = serializers.CharField(source='get_rule_type_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
+    timeout_action_display = serializers.CharField(source='get_timeout_action_display', read_only=True)
+    project_name = serializers.CharField(source="project.name", read_only=True, default=None)
+    application_name = serializers.CharField(source="application.name", read_only=True, default=None)
+    scope = serializers.CharField(read_only=True)
 
     class Meta:
         model = ApprovalRule
@@ -482,10 +496,25 @@ class ApprovalRuleCreateSerializer(serializers.ModelSerializer):
     """审批规则创建序列化器"""
     class Meta:
         model = ApprovalRule
-        fields = ["name", "code", "environment", "rule_type", "approvers", "min_approvers", "status"]
+        fields = [
+            "name", "code", "project", "application", "environment",
+            "rule_type", "approvers", "min_approvers",
+            "timeout_hours", "timeout_action", "notify_channels",
+            "is_default", "status",
+        ]
 
 
 class ApprovalActionSerializer(serializers.Serializer):
     """审批操作序列化器"""
     approved = serializers.BooleanField(help_text="是否批准")
     comment = serializers.CharField(max_length=512, required=False, allow_blank=True, default='', help_text="审批意见")
+
+
+class ApprovalRecordSerializer(serializers.ModelSerializer):
+    """审批操作记录序列化器"""
+    action_display = serializers.CharField(source='get_action_display', read_only=True)
+
+    class Meta:
+        model = ApprovalRecord
+        fields = "__all__"
+        read_only_fields = ["creator", "modifier", "create_time", "update_time", "acted_at"]
