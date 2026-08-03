@@ -79,6 +79,8 @@ const userSearchLoading = ref(false);
 const projectOptions = ref<Array<{ label: string; value: number }>>([]);
 const applicationOptions = ref<Array<{ label: string; value: number }>>([]);
 const appLoading = ref(false);
+// 加载编辑数据时禁用 watch 副作用，避免 project watch 清空已回填的 application
+const isLoading = ref(false);
 
 const isEdit = computed(() => !!formData.value.id);
 const modalTitle = computed(() => (isEdit.value ? '编辑审批规则' : '创建审批规则'));
@@ -97,6 +99,7 @@ const showMinApprovers = computed(() => formData.value.rule_type === 'any');
 watch(
   () => formData.value.scope,
   (scope) => {
+    if (isLoading.value) return;
     if (scope === 'global') {
       formData.value.project = null;
       formData.value.application = null;
@@ -110,6 +113,7 @@ watch(
 watch(
   () => formData.value.project,
   (projectId) => {
+    if (isLoading.value) return;
     if (projectId) {
       loadApplicationOptions(projectId);
     } else {
@@ -199,8 +203,13 @@ function resetForm() {
 
 // 加载编辑数据
 async function loadData(id: number) {
+  isLoading.value = true;
   try {
     const result = await getApprovalRuleDetail(id);
+    // 若有项目，先加载应用列表以便回显
+    if (result.project) {
+      await loadApplicationOptions(result.project);
+    }
     formData.value = { ...result };
     // 推断作用域（后端已返回 scope 字段，直接使用）
     formData.value.scope = result.scope || 'global';
@@ -212,12 +221,10 @@ async function loadData(id: number) {
       nickname: a.username,
       email: '',
     }));
-    // 若有项目，加载应用列表以便回显
-    if (result.project) {
-      loadApplicationOptions(result.project);
-    }
   } catch {
     message.error('加载数据失败');
+  } finally {
+    isLoading.value = false;
   }
 }
 
