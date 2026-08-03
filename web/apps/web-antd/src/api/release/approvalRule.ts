@@ -41,8 +41,6 @@ export namespace ApprovalRuleApi {
     timeout_action_display?: string;
     /** 通知渠道：site/email/feishu */
     notify_channels: string[];
-    /** 是否默认规则 */
-    is_default: boolean;
     /** 作用域：application/project/global（后端计算属性） */
     scope: 'application' | 'global' | 'project';
     /** 状态：1 启用 / 0 禁用 */

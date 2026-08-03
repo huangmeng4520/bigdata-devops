@@ -728,8 +728,6 @@ class ApprovalRule(CoreModel):
         default=list, blank=True, verbose_name="通知渠道"
     )  # ["site","email","feishu"]
 
-    is_default = models.BooleanField(default=False, verbose_name="该层级默认规则")
-
     # 状态
     status = models.IntegerField(
         choices=CommonStatus.choices,
@@ -743,11 +741,12 @@ class ApprovalRule(CoreModel):
         verbose_name_plural = verbose_name
         ordering = ["-create_time"]
         constraints = [
-            # 同一作用域+环境下默认规则唯一
+            # 同一作用域+环境下规则唯一
             models.UniqueConstraint(
                 fields=['environment', 'project', 'application'],
-                condition=models.Q(is_default=True, is_deleted=False),
-                name='uk_default_rule_per_scope'
+                condition=models.Q(is_deleted=False),
+                name='uk_rule_per_scope',
+                violation_error_message='该作用域+环境下已存在审批规则',
             ),
         ]
 

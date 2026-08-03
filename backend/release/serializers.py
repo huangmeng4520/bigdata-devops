@@ -500,7 +500,7 @@ class ApprovalRuleCreateSerializer(serializers.ModelSerializer):
             "name", "code", "project", "application", "environment",
             "rule_type", "approvers", "min_approvers",
             "timeout_hours", "timeout_action", "notify_channels",
-            "is_default", "status",
+            "status",
         ]
 
 

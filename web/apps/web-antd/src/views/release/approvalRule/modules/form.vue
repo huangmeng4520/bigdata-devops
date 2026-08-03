@@ -15,7 +15,6 @@ import {
   RadioGroup,
   Select,
   SelectOption,
-  Switch,
 } from 'ant-design-vue';
 
 import {
@@ -65,7 +64,6 @@ const formData = ref<Partial<ApprovalRuleApi.ApprovalRule> & { scope?: string }>
   timeout_hours: 24,
   timeout_action: 'reject',
   notify_channels: ['site'],
-  is_default: false,
   status: 1,
 });
 
@@ -192,7 +190,6 @@ function resetForm() {
     timeout_hours: 24,
     timeout_action: 'reject',
     notify_channels: ['site'],
-    is_default: false,
     status: 1,
   };
   selectedUserIds.value = [];
@@ -277,7 +274,6 @@ async function handleSubmit() {
     timeout_hours: formData.value.timeout_hours || 24,
     timeout_action: formData.value.timeout_action,
     notify_channels: formData.value.notify_channels || [],
-    is_default: !!formData.value.is_default,
     status: formData.value.status,
   };
 
@@ -490,11 +486,6 @@ const statusOptions = [
           :options="NOTIFY_CHANNEL_OPTIONS"
           placeholder="请选择通知渠道"
         />
-      </FormItem>
-
-      <!-- 是否默认 -->
-      <FormItem label="默认规则" name="is_default">
-        <Switch v-model:checked="formData.is_default" />
       </FormItem>
 
       <!-- 状态 -->

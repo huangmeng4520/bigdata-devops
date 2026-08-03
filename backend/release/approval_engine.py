@@ -41,7 +41,7 @@ class ApprovalEngine:
         rule = ApprovalRule.objects.filter(
             application=app, environment=env,
             status=1, is_deleted=False,
-        ).order_by('-is_default').first()
+        ).first()
         if rule:
             return rule, 'application'
 
@@ -50,7 +50,7 @@ class ApprovalEngine:
             rule = ApprovalRule.objects.filter(
                 project=app.project, application__isnull=True,
                 environment=env, status=1, is_deleted=False,
-            ).order_by('-is_default').first()
+            ).first()
             if rule:
                 return rule, 'project'
 
@@ -58,7 +58,7 @@ class ApprovalEngine:
         rule = ApprovalRule.objects.filter(
             project__isnull=True, application__isnull=True,
             environment=env, status=1, is_deleted=False,
-        ).order_by('-is_default').first()
+        ).first()
         return (rule, 'global') if rule else (None, None)
 
     @classmethod

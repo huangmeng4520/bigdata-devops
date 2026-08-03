@@ -55,17 +55,13 @@ class Migration(migrations.Migration):
             name='notify_channels',
             field=models.JSONField(blank=True, default=list, verbose_name='通知渠道'),
         ),
-        migrations.AddField(
-            model_name='approvalrule',
-            name='is_default',
-            field=models.BooleanField(default=False, verbose_name='该层级默认规则'),
-        ),
         migrations.AddConstraint(
             model_name='approvalrule',
             constraint=models.UniqueConstraint(
-                condition=models.Q(is_deleted=False, is_default=True),
+                condition=models.Q(is_deleted=False),
                 fields=['environment', 'project', 'application'],
-                name='uk_default_rule_per_scope',
+                name='uk_rule_per_scope',
+                violation_error_message='该作用域+环境下已存在审批规则',
             ),
         ),
 
