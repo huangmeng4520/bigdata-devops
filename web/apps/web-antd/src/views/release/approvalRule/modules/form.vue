@@ -37,15 +37,14 @@ const [Modal, modalApi] = useVbenModal({
     await handleSubmit();
   },
   async onOpenChange(isOpen) {
-    if (isOpen) {
-      const data = modalApi.getData<ApprovalRuleApi.ApprovalRule>();
-      if (data?.id) {
-        await loadData(data.id);
-      } else {
-        resetForm();
-      }
-      // 打开时加载项目列表
-      loadProjectOptions();
+    if (!isOpen) return;
+    // 先加载项目列表，编辑模式回显项目 Select 依赖选项就绪
+    await loadProjectOptions();
+    const data = modalApi.getData<ApprovalRuleApi.ApprovalRule>();
+    if (data?.id) {
+      await loadData(data.id);
+    } else {
+      resetForm();
     }
   },
 });
@@ -81,6 +80,8 @@ const applicationOptions = ref<Array<{ label: string; value: number }>>([]);
 const appLoading = ref(false);
 // 加载编辑数据时禁用 watch 副作用，避免 project watch 清空已回填的 application
 const isLoading = ref(false);
+// 每次打开递增，使进行中的旧 loadData 结果失效，防止快速切换导致数据覆盖
+let loadToken = 0;
 
 const isEdit = computed(() => !!formData.value.id);
 const modalTitle = computed(() => (isEdit.value ? '编辑审批规则' : '创建审批规则'));
@@ -181,6 +182,9 @@ async function handleUserSearch(value: string) {
 
 // 重置表单
 function resetForm() {
+  // 使任何进行中的 loadData 失效，防止异步结果覆盖新建表单
+  loadToken++;
+  isLoading.value = false;
   formData.value = {
     name: '',
     code: '',
@@ -203,13 +207,17 @@ function resetForm() {
 
 // 加载编辑数据
 async function loadData(id: number) {
+  const token = ++loadToken;
   isLoading.value = true;
   try {
     const result = await getApprovalRuleDetail(id);
+    // 若已被新请求取代（用户快速切换），放弃本次结果
+    if (token !== loadToken) return;
     // 若有项目，先加载应用列表以便回显
     if (result.project) {
       await loadApplicationOptions(result.project);
     }
+    if (token !== loadToken) return;
     formData.value = { ...result };
     // 推断作用域（后端已返回 scope 字段，直接使用）
     formData.value.scope = result.scope || 'global';
@@ -224,7 +232,9 @@ async function loadData(id: number) {
   } catch {
     message.error('加载数据失败');
   } finally {
-    isLoading.value = false;
+    if (token === loadToken) {
+      isLoading.value = false;
+    }
   }
 }
 
