@@ -38,17 +38,22 @@ class Command(BaseCommand):
                     'hide_in_menu': False,
                 }
             )
-            release_catalog = Menu.objects.create(
+            release_catalog, created = Menu.objects.get_or_create(
                 name='Release',
-                status=1,
-                type='catalog',
                 path='/release',
-                component='',
-                auth_code='',
-                meta=meta,
-                sort=9998
+                defaults={
+                    'status': 1,
+                    'type': 'catalog',
+                    'component': '',
+                    'auth_code': '',
+                    'meta': meta,
+                    'sort': 9998
+                }
             )
-            self.stdout.write(self.style.SUCCESS(f'创建发布管理目录菜单: ID={release_catalog.id}'))
+            if created:
+                self.stdout.write(self.style.SUCCESS(f'创建发布管理目录菜单: ID={release_catalog.id}'))
+            else:
+                self.stdout.write(f'发布管理目录菜单已存在: ID={release_catalog.id}')
 
         # 添加发布记录菜单
         record_meta, created = MenuMeta.objects.get_or_create(
