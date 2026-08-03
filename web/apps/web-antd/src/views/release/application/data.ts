@@ -24,7 +24,7 @@ export function useSchema(): VbenFormSchema[] {
       label: '所属项目',
       rules: z.number({ required_error: '请选择所属项目' }),
       componentProps: {
-        api: () => getProjectList({ page: 1, page_size: 1000, status: 1 }),
+        api: () => getProjectList({ page: 1, pageSize: 999, status: 1 }),
         resultField: 'items',
         labelField: 'name',
         valueField: 'id',
@@ -61,7 +61,7 @@ export function useSchema(): VbenFormSchema[] {
             };
           }
           return {
-            params: { project: projectId, status: 1, page_size: 1000 },
+            params: { project: projectId, status: 1, pageSize: 999 },
             placeholder: '请选择模块',
           };
         },
@@ -77,7 +77,7 @@ export function useSchema(): VbenFormSchema[] {
         componentProps: (values) => {
           const projectId = values.project;
           const moduleId = values.module;
-          let params: any = { status: 1, page_size: 1000 };
+          let params: any = { status: 1, pageSize: 999 };
 
           if (moduleId) {
             // 选了模块：精确过滤到该模块下的仓库

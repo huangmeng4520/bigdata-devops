@@ -57,7 +57,7 @@ export namespace ApprovalRuleApi {
   /** 列表查询参数（支持 project、application、scope、environment 过滤） */
   export interface ApprovalRuleListParams {
     page?: number;
-    page_size?: number;
+    pageSize?: number;
     name?: string;
     code?: string;
     project?: number;

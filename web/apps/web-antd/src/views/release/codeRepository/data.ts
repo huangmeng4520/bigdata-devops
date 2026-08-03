@@ -37,7 +37,7 @@ export function useGridFormSchema(): VbenFormSchema[] {
       fieldName: 'project',
       label: '所属项目',
       componentProps: {
-        api: () => getProjectList({ page: 1, page_size: 1000 }),
+        api: () => getProjectList({ page: 1, pageSize: 999 }),
         resultField: 'items',
         labelField: 'name',
         valueField: 'id',
@@ -66,7 +66,7 @@ export function useGridFormSchema(): VbenFormSchema[] {
           if (!projectId) {
             return { params: undefined, placeholder: '请先选择项目' };
           }
-          return { params: { project: projectId, page_size: 1000 }, placeholder: '请选择模块' };
+          return { params: { project: projectId, pageSize: 999 }, placeholder: '请选择模块' };
         },
       },
     },
@@ -166,7 +166,7 @@ export function useFormSchema(): VbenFormSchema[] {
       fieldName: 'project',
       label: '所属项目',
       componentProps: {
-        api: () => getProjectList({ page: 1, page_size: 1000 }),
+        api: () => getProjectList({ page: 1, pageSize: 999 }),
         resultField: 'items',
         labelField: 'name',
         valueField: 'id',
@@ -180,7 +180,7 @@ export function useFormSchema(): VbenFormSchema[] {
       fieldName: 'module',
       label: '所属模块',
       componentProps: {
-        api: () => getModuleList({ page: 1, page_size: 1000 }),
+        api: () => getModuleList({ page: 1, pageSize: 999 }),
         resultField: 'items',
         labelField: 'name',
         valueField: 'id',

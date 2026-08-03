@@ -52,7 +52,7 @@ export namespace ApplicationPipelineApi {
 
   export interface ConfigListParams {
     page?: number;
-    page_size?: number;
+    pageSize?: number;
     application?: number;
     environment?: string;
     template?: number;
@@ -108,7 +108,7 @@ async function deleteConfig(id: number) {
 /**
  * 获取配置版本历史
  */
-async function getConfigVersions(id: number, params?: { page?: number; page_size?: number }) {
+async function getConfigVersions(id: number, params?: { page?: number; pageSize?: number }) {
   return requestClient.get<{ items: ApplicationPipelineApi.ConfigVersion[]; total: number }>(`/release/application-pipeline-configs/${id}/versions/`, {
     params,
   });

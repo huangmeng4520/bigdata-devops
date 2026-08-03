@@ -37,7 +37,7 @@ export namespace CodeRepositoryApi {
 
   export interface CodeRepositoryListParams {
     page?: number;
-    page_size?: number;
+    pageSize?: number;
     name?: string;
     code?: string;
     project?: number;

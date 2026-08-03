@@ -161,7 +161,7 @@ async function loadData() {
   try {
     const params: any = {
       page: pagination.current,
-      page_size: pagination.pageSize,
+      pageSize: pagination.pageSize,
     };
 
     if (searchForm.application_name) {

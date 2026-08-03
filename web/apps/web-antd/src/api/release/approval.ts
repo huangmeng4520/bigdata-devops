@@ -56,7 +56,7 @@ export namespace ApprovalApi {
   /** 我的审批待办查询参数 */
   export interface MyApprovalTasksParams {
     page?: number;
-    page_size?: number;
+    pageSize?: number;
     status?: string;
     environment?: string;
   }
