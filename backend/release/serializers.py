@@ -506,7 +506,7 @@ class ApprovalRuleCreateSerializer(serializers.ModelSerializer):
 
 class ApprovalActionSerializer(serializers.Serializer):
     """审批操作序列化器"""
-    approved = serializers.BooleanField(help_text="是否批准")
+    approved = serializers.BooleanField(required=False, help_text="是否批准")
     comment = serializers.CharField(max_length=512, required=False, allow_blank=True, default='', help_text="审批意见")
 
 
