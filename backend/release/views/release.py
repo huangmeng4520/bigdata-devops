@@ -243,9 +243,15 @@ class ReleaseRecordViewSet(DataPermissionMixin, CustomModelViewSet):
 
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def my_approval_tasks(self, request):
-        """我的审批待办：当前用户是 current_approver_ids 之一的待审批单"""
+        """我的审批待办：当前用户是 current_approver_ids 之一的待审批单
+
+        注意：此处直接使用基础 queryset，不经过 data_permission_filter，
+        因为审批人应能看到分配给自己的待办，即使该应用不在其数据权限范围内。
+        """
         from django.db.models import Q
-        qs = self.get_queryset().filter(
+        qs = ReleaseRecord.objects.select_related(
+            'application', 'application__project', 'application__module'
+        ).filter(
             status='approval_pending'
         ).filter(
             Q(current_approver_ids__contains=request.user.id)
