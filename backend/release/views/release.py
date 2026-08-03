@@ -479,27 +479,31 @@ def trigger_release(request, app_id):
         remark=data.get('remark', '')
     )
 
-    # 需要审批 → 走审批引擎（三级作用域规则匹配）
+    # 先尝试匹配审批规则（无论环境策略是否要求审批，配了规则就应走审批）
+    engine = ApprovalEngine.init_for_release(release)
+    if engine:
+        # 匹配到规则，进入待审批
+        if not release.require_approval:
+            release.require_approval = True
+            release.save(update_fields=['require_approval'])
+        notify_approval_pending(release)
+        return Response({
+            "code": 0,
+            "data": {
+                "id": release.id,
+                "status": "approval_pending",
+                "status_display": release.get_status_display(),
+                "scope": release.approval_scope,
+                "rule": release.approval_rule.code if release.approval_rule else None,
+                "rule_name": release.approval_rule.name if release.approval_rule else None,
+                "current_approver_ids": release.current_approver_ids,
+                "required_count": release.required_count,
+                "message": "发布已创建，等待审批"
+            }
+        })
+    # 未匹配到规则
     if require_approval:
-        engine = ApprovalEngine.init_for_release(release)
-        if engine:
-            # 已匹配到规则，进入待审批
-            notify_approval_pending(release)
-            return Response({
-                "code": 0,
-                "data": {
-                    "id": release.id,
-                    "status": "approval_pending",
-                    "status_display": release.get_status_display(),
-                    "scope": release.approval_scope,
-                    "rule": release.approval_rule.code if release.approval_rule else None,
-                    "rule_name": release.approval_rule.name if release.approval_rule else None,
-                    "current_approver_ids": release.current_approver_ids,
-                    "required_count": release.required_count,
-                    "message": "发布已创建，等待审批"
-                }
-            })
-        # 未匹配到规则 → 降级为免审直发
+        # 环境策略要求审批但无匹配规则 → 降级为免审直发
         release.require_approval = False
         release.save(update_fields=['require_approval'])
 
