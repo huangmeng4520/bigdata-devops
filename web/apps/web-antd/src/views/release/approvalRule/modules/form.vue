@@ -127,7 +127,7 @@ watch(
 // 加载项目列表
 async function loadProjectOptions() {
   try {
-    const res = await getProjectList({ page_size: 200 });
+    const res = await getProjectList({ page: 1, pageSize: 200 });
     projectOptions.value = (res.items || []).map((p) => ({
       label: p.name,
       value: p.id,
@@ -141,7 +141,7 @@ async function loadProjectOptions() {
 async function loadApplicationOptions(projectId: number) {
   appLoading.value = true;
   try {
-    const res = await getApplicationList({ project: projectId, page_size: 200 });
+    const res = await getApplicationList({ project: projectId, page: 1, pageSize: 200 });
     applicationOptions.value = (res.items || []).map((a) => ({
       label: a.name,
       value: a.id,

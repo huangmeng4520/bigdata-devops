@@ -21,7 +21,7 @@ export namespace ReleaseProjectApi {
 
   export interface ProjectListParams {
     page?: number;
-    page_size?: number;
+    pageSize?: number;
     name?: string;
     code?: string;
     status?: number;
