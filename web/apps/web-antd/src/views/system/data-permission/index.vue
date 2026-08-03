@@ -85,7 +85,7 @@ async function loadProjects() {
 async function loadUsers() {
   userLoading.value = true;
   try {
-    const res = await getUserList({ page: 1, page_size: 999 });
+    const res = await getUserList({ page: 1, pageSize: 999 });
     allUsers.value = (res.items || []).map((u: any) => ({
       id: u.id,
       username: u.username,

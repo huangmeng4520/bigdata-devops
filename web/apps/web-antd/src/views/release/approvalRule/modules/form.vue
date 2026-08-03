@@ -153,13 +153,13 @@ async function loadApplicationOptions(projectId: number) {
   }
 }
 
-// 搜索用户（参考 ReleaseModal.vue 的 handleUserSearch）
+// 搜索用户（使用后端 SearchFilter 支持用户名/昵称/手机号多字段搜索）
 async function handleUserSearch(value: string) {
   if (!value || value.length < 1) return;
   userSearchLoading.value = true;
   try {
-    const res = await getUserList({ username: value, page_size: 20 });
-    const list = (res.results || []).map((user: any) => ({
+    const res = await getUserList({ search: value, page: 1, pageSize: 20 });
+    const list = (res?.items || []).map((user: any) => ({
       id: user.id,
       username: user.username,
       nickname: user.nickname || user.username,
@@ -170,8 +170,8 @@ async function handleUserSearch(value: string) {
     list.forEach((u: { id: number; username: string; nickname?: string; email?: string }) => {
       if (!existing.has(u.id)) userOptions.value.push(u);
     });
-  } catch {
-    // 忽略搜索失败
+  } catch (error) {
+    console.error('搜索用户失败:', error);
   } finally {
     userSearchLoading.value = false;
   }

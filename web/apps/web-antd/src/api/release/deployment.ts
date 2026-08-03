@@ -71,7 +71,12 @@ export function getAppEnvironments(appId: number) {
 // ============================================================
 
 /** 获取用户列表（用于审批人选择） */
-export function getUserList(params?: { username?: string; page?: number; page_size?: number }) {
+export function getUserList(params?: {
+  username?: string;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}) {
   return requestClient.get('/system/user/', { params });
 }
 
