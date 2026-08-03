@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { ApprovalRuleApi } from '#/api/release';
 
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 
 import { useVbenModal } from '@vben/common-ui';
 
@@ -234,6 +234,9 @@ async function loadData(id: number) {
       nickname: a.username,
       email: '',
     }));
+    // 等待 watch 在 isLoading=true 时执行完毕，避免 finally 同步设置
+    // isLoading=false 后 watch 才触发导致 application 被清空
+    await nextTick();
   } catch {
     message.error('加载数据失败');
   } finally {
