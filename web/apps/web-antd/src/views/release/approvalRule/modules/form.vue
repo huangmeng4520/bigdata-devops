@@ -38,8 +38,11 @@ const [Modal, modalApi] = useVbenModal({
   },
   async onOpenChange(isOpen) {
     if (!isOpen) return;
+    // 每次打开递增 token，使旧 onOpenChange 的后续操作失效
+    const token = ++openToken;
     // 先加载项目列表，编辑模式回显项目 Select 依赖选项就绪
     await loadProjectOptions();
+    if (token !== openToken) return;
     const data = modalApi.getData<ApprovalRuleApi.ApprovalRule>();
     if (data?.id) {
       await loadData(data.id);
@@ -82,6 +85,8 @@ const appLoading = ref(false);
 const isLoading = ref(false);
 // 每次打开递增，使进行中的旧 loadData 结果失效，防止快速切换导致数据覆盖
 let loadToken = 0;
+// 每次打开 Modal 递增，防止旧 onOpenChange 的 resetForm 覆盖新打开的编辑数据
+let openToken = 0;
 
 const isEdit = computed(() => !!formData.value.id);
 const modalTitle = computed(() => (isEdit.value ? '编辑审批规则' : '创建审批规则'));
