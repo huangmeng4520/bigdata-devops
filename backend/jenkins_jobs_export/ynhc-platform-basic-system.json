@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "ynhc-platform-basic-system",
+    "code": "ynhc-platform-basic-system",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "20260731",
+    "git_url": "ssh://git@220.163.62.194:12002/wjw/htgl/platform-basic-support.git"
+  },
+  "version": {
+    "version": "1.0.3",
+    "content": "// Pipeline from SCM: platform-basic-system/devops/Jenkinsfile\n// URL: ssh://git@20.48.1.132:12002/wjw/htgl/platform-basic-support.git",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

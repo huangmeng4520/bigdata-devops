@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "intelligent-prewarning-web-dev",
+    "code": "intelligent-prewarning-web-dev",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "统计数据智能分析监测预警系统web-dev",
+    "git_url": "ssh://git@220.163.62.194:12002/front/PublicDataPlatform/intelligent-prewarning-web"
+  },
+  "version": {
+    "version": "1.0.3",
+    "content": "pipeline {\n    agent any\n\n    environment {\n        // 远程服务器配置\n        REMOTE_HOST = '20.48.1.68'\n        REMOTE_USER = 'root'\n        REMOTE_CREDENTIALS_ID = 'server-18-credentials-id'\n        REMOTE_ADDRESS = '/data/soft/intelligent-prewarning/'\n\n\n        // 构建时间戳（用于归档或版本标记）\n        TIMESTAMP = new Date().format(\"yyyyMMddHHmmss\", TimeZone.getTimeZone('Asia/Shanghai'))\n        \n        // 部署文件名\n        DEPLOY_NAME = 'dist'\n        // 打包文件名\n        ARCHIVE_NAME = '${DEPLOY_NAME}.tar.gz'\n    }\n\n    stages {\n        stage('Git Checkout') {\n            steps {\n                echo \"Checking out branch: ${params.Branch}\"\n                checkout scmGit(\n                    branches: [[name: \"${params.Branch}\"]],\n                    extensions: [],\n                    userRemoteConfigs: [[\n                        credentialsId: 'SSH-KEY-FOR-GITLAB',\n                        url: \"${GIALAB_ADDRESS}/front/PublicDataPlatform/intelligent-prewarning-web\"\n                    ]]\n                )\n            }\n        }\n\n        stage('Dependencies Install') {\n            steps {\n                sh 'node -v'\n                sh 'pnpm -v'\n                sh 'pnpm install --frozen-lockfile -registry=https://registry.npmmirror.com' // 推荐生产环境使用 --frozen-lockfile\n            }\n        }\n\n        stage('Build') {\n            steps {\n                sh 'pnpm run build:test'\n            }\n        }\n\n        stage('Deploy to Remote') {\n            steps {\n                script {\n\n                    echo \"Deploying to ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_ADDRESS}\"\n\n                    sshagent([REMOTE_CREDENTIALS_ID]) {\n                        sh \"\"\"\n                            pwd\n                            # 创建压缩包\n                            tar -zcf ${ARCHIVE_NAME} ${DEPLOY_NAME}/\n                            \n                            # 上传到服务器\n                            scp ${ARCHIVE_NAME} ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_ADDRESS}\n                            \n                            # 在远程服务器执行命令\n                            ssh ${REMOTE_USER}@${REMOTE_HOST} \"\n                                cd ${REMOTE_ADDRESS}\n                                # 删除旧文件\n                                rm -rf ${DEPLOY_NAME}/\n                                \n                                # 解压新包并清理\n                                tar -zxvf ${ARCHIVE_NAME} && rm -f ${ARCHIVE_NAME}\n                                \n                                mv ${DEPLOY_NAME}/dist-test/ ./\n                                rm -rf ${DEPLOY_NAME}/\n                                mv dist-test/ ${DEPLOY_NAME}/\n                                \n                                \n                                # 添加时间戳验证\n                                echo \\\"Deployment successful at \\$(date +'%Y-%m-%d %H:%M:%S')\\\"\n                            \"\n                        \"\"\"\n                    }\n                }\n            }\n        }\n    }\n}",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "digital-economy-web",
+    "code": "digital-economy-web",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "repo_name_match test id=355",
+    "git_url": "http://220.163.62.194:12001/digital-economy-web.git"
+  },
+  "version": {
+    "version": "1.0.0",
+    "content": "// Pipeline: http://220.163.62.194:12001/digital-economy-web.git",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

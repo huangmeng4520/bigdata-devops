@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "Health_Unified_Identity_Authentication_Web",
+    "code": "Health_Unified_Identity_Authentication_Web",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "exact_match test id=404",
+    "git_url": "http://220.163.62.194:12001/front/ynhc/health-unified-identity-authentication-web.git"
+  },
+  "version": {
+    "version": "1.0.0",
+    "content": "// Pipeline: http://220.163.62.194:12001/front/ynhc/health-unified-identity-authentication-web.git",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

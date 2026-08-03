@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "web-project-archetype",
+    "code": "web-project-archetype",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "exact_match test id=390",
+    "git_url": "http://220.163.62.194:12001/common/web-project-archetype.git"
+  },
+  "version": {
+    "version": "1.0.0",
+    "content": "// Pipeline: http://220.163.62.194:12001/common/web-project-archetype.git",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "rxf_xybg",
+    "code": "rxf_xybg",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "exact_match test id=394",
+    "git_url": "http://220.163.62.194:12001/big_data/rxf_xybg.git"
+  },
+  "version": {
+    "version": "1.0.0",
+    "content": "// Pipeline: http://220.163.62.194:12001/big_data/rxf_xybg.git",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

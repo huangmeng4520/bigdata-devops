@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "digital-collaboration-manager",
+    "code": "digital-collaboration-manager",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "OA",
+    "git_url": "ssh://git@220.163.62.194:12002/digital-collaboration/digital-collaboration-manager.git"
+  },
+  "version": {
+    "version": "1.0.3",
+    "content": "// Pipeline from SCM: devops/Jenkinsfile\n// URL: ssh://git@20.48.1.132:12002/digital-collaboration/digital-collaboration-manager.git",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

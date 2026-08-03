@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "flowable-7",
+    "code": "flowable-7",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "repo_name_match test id=351",
+    "git_url": "http://220.163.62.194:12001/flowable-dsj.git"
+  },
+  "version": {
+    "version": "1.0.0",
+    "content": "// Pipeline: http://220.163.62.194:12001/flowable-dsj.git",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

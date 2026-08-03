@@ -393,3 +393,67 @@ if __name__ == "__main__":
 # # 3. 确认无误后正式导入
 # python manage.py import_jenkins_jobs --dir ../jenkins_jobs_export --environment test
 # ```
+# 1. 先运行导出脚本获取 JSON（需要配置 Jenkins 凭据）
+python docs/jenkinsjob-json.py
+
+# 2. 预检
+python manage.py import_jenkins_jobs --dir ./jenkins_jobs_export --dry-run
+
+# 3. 正式导入
+python manage.py import_jenkins_jobs --dir ./jenkins_jobs_export --environment test --default-project "未分类"
+
+csp-magager-web-test  git_url=ssh://git@220.163.62.194:12002/front/gxyyzc-manage.git  (csp-magager-web-test.json)
+  csp-magager-web  git_url=ssh://git@220.163.62.194:12002/front/gxyyzc-manage.git  (csp-magager-web.json)
+  csp-web-test  git_url=ssh://git@220.163.62.194:12002/front/csp-portal.git  (csp-web-test.json)
+  csp-web  git_url=ssh://git@220.163.62.194:12002/front/csp-portal.git  (csp-web.json)
+  digital-collaboration-mobile  git_url=ssh://git@220.163.62.194:12002/front/digital-collaboration-app.git  (digital-collaboration-mobile.json)
+  digital-collaboration-web  git_url=ssh://git@220.163.62.194:12002/front/digital-collaboration-web.git  (digital-collaboration-web.json)
+  digital-expert-portal-dev-web  git_url=ssh://git@220.163.62.194:12002/front/expert-platform-for-project-management.git  (digital-expert-portal-dev-web.json)
+  digital-expert-portal-test-web  git_url=ssh://git@220.163.62.194:12002/front/expert-platform-for-project-management.git  (digital-expert-portal-test-web.json)
+  dsj_yzt_web-dev  git_url=ssh://git@220.163.62.194:12002/front/dsj_zwy_web.git  (dsj_yzt_web-dev.json)
+  frontend-shujulianjieqi-gov-dev  git_url=ssh://git@220.163.62.194:12002/front/PublicDataPlatform/connector.git  (frontend-shujulianjieqi-gov-dev.json)
+  frontend-shujulianjieqi-gov-test  git_url=ssh://git@220.163.62.194:12002/front/PublicDataPlatform/connector.git  (frontend-shujulianjieqi-gov-test.json)
+  gov-project-manager-dev-web  git_url=ssh://git@220.163.62.194:12002/front/gov-project-manager-web.git  (gov-project-manager-dev-web.json)
+  gov-project-manager-test-web  git_url=ssh://git@220.163.62.194:12002/front/gov-project-manager-web.git  (gov-project-manager-test-web.json)
+  gov-project-manager-web-dev  git_url=ssh://git@220.163.62.194:12002/front/gov-project-manager-web.git  (gov-project-manager-web-dev.json)
+  gxyyzc-manage-web-dev  git_url=ssh://git@220.163.62.194:12002/front/gxyyzc-manage.git  (gxyyzc-manage-web-dev.json)
+  medicare-admin-web-test  git_url=ssh://git@220.163.62.194:12002/front/medicare-admin-web.git  (medicare-admin-web-test.json)
+  medicare-admin-web  git_url=ssh://git@220.163.62.194:12002/front/medicare-admin-web.git  (medicare-admin-web.json)
+  medicare-daily-web-test  git_url=ssh://git@220.163.62.194:12002/front/medicare-daily-web.git  (medicare-daily-web-test.json)
+  medicare-daily-web  git_url=ssh://git@220.163.62.194:12002/front/medicare-daily-web.git  (medicare-daily-web.json)
+  medicare-datagovern-admin-web-test  git_url=ssh://git@220.163.62.194:12002/front/medicare-datagovern-admin-web.git  (medicare-datagovern-admin-web-test.json)
+  medicare-datagovern-admin-web  git_url=ssh://git@220.163.62.194:12002/front/medicare-datagovern-admin-web.git  (medicare-datagovern-admin-web.json)
+  medicare-datagovern-portal-web-test  git_url=ssh://git@220.163.62.194:12002/front/medicare-datagovern-portal-web.git  (medicare-datagovern-portal-web-test.json)
+  medicare-datagovern-portal-web  git_url=ssh://git@220.163.62.194:12002/front/medicare-datagovern-portal-web.git  (medicare-datagovern-portal-web.json)
+  medicare-portal-web-test  git_url=ssh://git@220.163.62.194:12002/front/medicare-portal-web.git  (medicare-portal-web-test.json)
+  medicare-portal-web  git_url=ssh://git@220.163.62.194:12002/front/medicare-portal-web.git  (medicare-portal-web.json)
+  medication-overdosing-admin-web-dev  git_url=ssh://git@220.163.62.194:12002/front/medicare-admin-web.git  (medication-overdosing-admin-web-dev.json)
+  message-service-web-test  git_url=ssh://git@220.163.62.194:12002/front/tyxx-data-manage.git  (message-service-web-test.json)
+  message-service-web  git_url=ssh://git@220.163.62.194:12002/front/tyxx-data-manage.git  (message-service-web.json)
+  oauth2-web-test  git_url=ssh://git@220.163.62.194:12002/front/unified-identity-authentication-web.git  (oauth2-web-test.json)
+  oauth2-web  git_url=ssh://git@220.163.62.194:12002/front/unified-identity-authentication-web.git  (oauth2-web.json)
+  result-transformation-algorithm-prod  git_url=${GIT_URL}  (result-transformation-algorithm-prod.json)
+  result-transformation-manage-prod  git_url=${GIT_URL}  (result-transformation-manage-prod.json)
+  result-transformation-portal-prod  git_url=${GIT_URL}  (result-transformation-portal-prod.json)
+  trusted-data-space-portal-test-web  git_url=ssh://git@220.163.62.194:12002/front/PublicDataPlatform/data-connectivity-portal.git  (trusted-data-space-portal-test-web.json)
+  trusted-data-space-pub-web  git_url=ssh://git@220.163.62.194:12002/front/PublicDataPlatform/data-connectivity-web.git  (trusted-data-space-pub-web.json)
+  trusted-data-space-test-pub-web  git_url=ssh://git@220.163.62.194:12002/front/PublicDataPlatform/data-connectivity-web.git  (trusted-data-space-test-pub-web.json)
+  trusted-data-space-test-web  git_url=ssh://git@220.163.62.194:12002/front/PublicDataPlatform/data-connectivity-web.git  (trusted-data-space-test-web.json)
+  trusted-data-space-web  git_url=ssh://git@220.163.62.194:12002/front/PublicDataPlatform/data-connectivity-web.git  (trusted-data-space-web.json)
+  tyxx-data-manage-web-test  git_url=  (tyxx-data-manage-web-test.json)
+  user-web-test  git_url=ssh://git@220.163.62.194:12002/front/bigdata-user-manage.git  (user-web-test.json)
+  user-web  git_url=ssh://git@220.163.62.194:12002/front/bigdata-user-manage.git  (user-web.json)
+  yibao-web  git_url=ssh://git@220.163.62.194:12002/front/medicare-admin-web.git  (yibao-web.json)
+  ynhc-resident-health-resource  git_url=ssh://git@220.163.62.194:12002/wjw/cd/resident-health-resource.git  (ynhc-resident-health-resource.json)
+  yzt-data-manage-dev  git_url=ssh://git@220.163.62.194:12002/front/yzt-data-manage.git  (yzt-data-manage-dev.json)
+  yzt-data-manage-web-test  git_url=ssh://git@220.163.62.194:12002/front/yzt-data-manage.git  (yzt-data-manage-web-test.json)
+  yzt-data-manage-web  git_url=ssh://git@220.163.62.194:12002/front/yzt-data-manage.git  (yzt-data-manage-web.json)
+  yzt-data-visual-web-test  git_url=ssh://git@220.163.62.194:12002/front/yzt-data-visual.git  (yzt-data-visual-web-test.json)
+  yzt-data-visual-web  git_url=ssh://git@220.163.62.194:12002/front/yzt-data-visual.git  (yzt-data-visual-web.json)
+  zt-gov-project-manager-test-web  git_url=ssh://git@220.163.62.194:12002/front/gov-project-manager-web.git  (zt-gov-project-manager-test-web.json)
+
+--- 跳过列表 ---
+  analytics-server-bes-war-test  原因=template code exists  (analytics-server-bes-war-test.json)
+  analytics-server  原因=template code exists  (analytics-server.json)
+
+导入完成: 205/207 个匹配的 job 已入库。                              

@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "big_data_datax-web",
+    "code": "big_data_datax-web",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "exact_match test id=380",
+    "git_url": "http://220.163.62.194:12001/big_data/big_data_datax-web.git"
+  },
+  "version": {
+    "version": "1.0.0",
+    "content": "// Pipeline: http://220.163.62.194:12001/big_data/big_data_datax-web.git",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

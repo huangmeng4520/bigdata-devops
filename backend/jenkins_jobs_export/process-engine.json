@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "process-engine",
+    "code": "process-engine",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "流程引擎",
+    "git_url": "ssh://git@220.163.62.194:12002/common/process-engine.git"
+  },
+  "version": {
+    "version": "1.0.3",
+    "content": "// Pipeline from SCM: devops/Jenkinsfile\n// URL: ssh://git@20.48.1.132:12002/common/process-engine.git",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

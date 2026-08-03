@@ -72,14 +72,22 @@ LANGUAGE_TO_APP_TYPE = {
 
 
 def normalize_git_url(url: str) -> str:
-    """标准化 git url 以便匹配：去除 .git 后缀、统一小写协议头"""
+    """标准化 git url 以便匹配：去除 .git 后缀"""
     if not url:
         return ""
     url = url.strip()
-    # 去除 .git 后缀
     if url.endswith(".git"):
         url = url[:-4]
     return url
+
+
+def extract_repo_name(url: str) -> str:
+    """提取仓库名（URL 最后路径段）"""
+    if not url:
+        return ""
+    n = normalize_git_url(url)
+    m = re.search(r'([^/]+)$', n)
+    return m.group(1) if m else ""
 
 
 def match_code_repository(git_url: str):
@@ -90,29 +98,30 @@ def match_code_repository(git_url: str):
       1. CodeRepository.git_http_url 完全匹配（标准化后）
       2. CodeRepository.git_url 完全匹配（标准化后）
       3. 去除协议头后路径部分匹配（应对端口/协议差异）
+      4. 仓库名匹配（提取最后路径段，应对 Jenkins job 路径与 GitLab 路径不一致）
 
-    返回: CodeRepository 实例 或 None
+    返回: (CodeRepository 实例或 None, 匹配方式字符串)
     """
     if not git_url:
-        return None
+        return None, ""
 
     normalized = normalize_git_url(git_url)
     if not normalized:
-        return None
+        return None, ""
 
     # 策略1: git_http_url 完全匹配
     for repo in CodeRepository.objects.filter(
         is_deleted=False, git_http_url__isnull=False
     ).exclude(git_http_url=""):
         if normalize_git_url(repo.git_http_url) == normalized:
-            return repo
+            return repo, "http_exact"
 
     # 策略2: git_url (SSH) 完全匹配
     for repo in CodeRepository.objects.filter(
         is_deleted=False, git_url__isnull=False
     ).exclude(git_url=""):
         if normalize_git_url(repo.git_url) == normalized:
-            return repo
+            return repo, "ssh_exact"
 
     # 策略3: 路径部分匹配（去除协议和 host 后的 path 部分）
     # 例: ssh://git@host:port/a/b  vs  http://other-host/a/b  -> 匹配 /a/b
@@ -126,9 +135,32 @@ def match_code_repository(git_url: str):
                     continue
                 m = re.search(r'://[^/]+(/.+)$', normalize_git_url(val))
                 if m and m.group(1).rstrip('/') == target_path:
-                    return repo
+                    return repo, "path_partial"
 
-    return None
+    # 策略4: 仓库名匹配（提取最后路径段，模糊匹配）
+    # 应对 Jenkins job 中 git URL 路径与 GitLab 实际路径不一致的场景
+    # 例: /front/gxyyzc-manage.git vs /front/csp/gxyyzc-manage.git
+    # 要求：仓库名必须唯一，否则跳过（避免错误关联）
+    target_repo_name = extract_repo_name(normalized)
+    if target_repo_name:
+        candidate = None
+        for repo in CodeRepository.objects.filter(is_deleted=False):
+            matched_field = None
+            for field in ('git_http_url', 'git_url'):
+                val = getattr(repo, field, None)
+                if val and extract_repo_name(val) == target_repo_name:
+                    matched_field = field
+                    break
+            if matched_field:
+                if candidate is None:
+                    candidate = repo
+                else:
+                    # 多个不同仓库同名，模糊匹配不安全，放弃
+                    return None, ""
+        if candidate:
+            return candidate, "repo_name"
+
+    return None, ""
 
 
 def load_json_file(path: str) -> dict:
@@ -173,6 +205,11 @@ class Command(BaseCommand):
             help="已存在的 Application 跳过，不重复创建（默认启用）",
         )
         parser.add_argument(
+            "--default-project",
+            default=None,
+            help="当 CodeRepository 未关联项目时，使用的默认项目名称或 ID（自动创建「未分类」项目）",
+        )
+        parser.add_argument(
             "--force",
             action="store_true",
             help="强制覆盖已存在的数据（慎用，会先删除再重建）",
@@ -186,6 +223,37 @@ class Command(BaseCommand):
         dry_run = options["dry_run"]
         skip_existing = options["skip_existing"]
         force = options["force"]
+        default_project_name = options.get("default_project")
+
+        # 如果指定了默认项目，先查找（dry-run 期间不创建）
+        default_project = None
+        if default_project_name:
+            from release.models import Project
+            try:
+                # 支持按 ID 或 name 查找
+                default_project = Project.objects.get(
+                    pk=int(default_project_name), is_deleted=False
+                )
+            except (ValueError, Project.DoesNotExist):
+                default_project = Project.objects.filter(
+                    name=default_project_name, is_deleted=False
+                ).first()
+                if not default_project and not dry_run:
+                    # code 字段限制 32 字符
+                    code = default_project_name.lower().replace(" ", "_")[:32]
+                    # 检查 code 唯一性
+                    if Project.objects.filter(code=code, is_deleted=False).exists():
+                        code = f"{code}_{Project.objects.count()}"[:32]
+                    default_project = Project.objects.create(
+                        name=default_project_name,
+                        code=code,
+                        status=CommonStatus.ENABLED,
+                        creator="system_import",
+                        modifier="system_import",
+                    )
+                    self.stdout.write(self.style.WARNING(
+                        f"自动创建默认项目: {default_project_name}"
+                    ))
 
         if not os.path.isdir(json_dir):
             self.stderr.write(self.style.ERROR(f"目录不存在: {json_dir}"))
@@ -232,7 +300,7 @@ class Command(BaseCommand):
             git_url = template_data.get("git_url", "")
 
             # 匹配 CodeRepository
-            repo = match_code_repository(git_url)
+            repo, match_method = match_code_repository(git_url)
             if not repo:
                 self.stdout.write(self.style.WARNING(
                     f"  未匹配到 CodeRepository: job={job_name}, git_url={git_url}"
@@ -240,8 +308,38 @@ class Command(BaseCommand):
                 unmatched.append((fname, job_name, git_url))
                 continue
 
+            # 仓库名匹配（策略4）标注为模糊匹配，提醒用户确认
+            if match_method == "repo_name":
+                self.stdout.write(self.style.WARNING(
+                    f"  仓库名匹配 (repo_name): {repo.name}(id={repo.id})"
+                ))
+            else:
+                self.stdout.write(
+                    f"  精确匹配 ({match_method}): {repo.name}(id={repo.id})"
+                )
+
             project = repo.project
             module = repo.module
+
+            # 处理 project 未关联的情况
+            if not project:
+                if default_project:
+                    project = default_project
+                    self.stdout.write(self.style.WARNING(
+                        f"  repo 未关联项目，使用默认项目: {project.name}"
+                    ))
+                elif dry_run and default_project_name:
+                    # dry-run 期间默认项目尚未创建，但仍标记为可匹配
+                    self.stdout.write(self.style.WARNING(
+                        f"  repo 未关联项目，正式导入时将使用默认项目: {default_project_name}"
+                    ))
+                else:
+                    self.stdout.write(self.style.WARNING(
+                        f"  repo 未关联项目且未指定 --default-project，跳过: {job_name}"
+                    ))
+                    unmatched.append((fname, job_name, git_url))
+                    continue
+
             self.stdout.write(
                 f"  匹配成功: repo={repo.name}(id={repo.id}), "
                 f"project={project.name if project else 'N/A'}, "
@@ -301,26 +399,52 @@ class Command(BaseCommand):
                         modifier="system_import",
                     )
 
-                    # 2. 创建 PipelineTemplate + PipelineTemplateVersion
+                    # 2. 创建/恢复 PipelineTemplate + PipelineTemplateVersion
                     template_code = job_name
-                    # 若 template code 已存在，附加后缀避免冲突
-                    if PipelineTemplate.objects.filter(
-                        code=template_code, is_deleted=False
-                    ).exists():
-                        template_code = f"{job_name}_{app.id}"
+                    template = None
+                    # 处理 code 唯一约束（包括软删除记录）
+                    existing_template = PipelineTemplate.objects.filter(
+                        code=template_code
+                    ).first()
+                    if existing_template:
+                        if existing_template.is_deleted:
+                            # 软删除的：恢复并重用
+                            existing_template.is_deleted = False
+                            existing_template.name = job_name
+                            existing_template.language = template_data.get("language", "java")
+                            existing_template.language_version = template_data.get("language_version") or ""
+                            existing_template.framework = template_data.get("framework") or ""
+                            existing_template.description = template_data.get("description", "")
+                            existing_template.modifier = "system_import"
+                            existing_template.save()
+                            template = existing_template
+                            self.stdout.write(f"  恢复已软删除的 PipelineTemplate: {template_code}")
+                        elif skip_existing and not force:
+                            self.stdout.write(self.style.WARNING(
+                                f"  PipelineTemplate 已存在 (code={template_code})，跳过"
+                            ))
+                            # 软删除刚创建的 Application，保持一致性
+                            app.is_deleted = True
+                            app.save()
+                            skipped.append((fname, job_name, "template code exists"))
+                            continue
+                        else:
+                            # 生成唯一 code
+                            template_code = f"{job_name}_{app.id}"
 
-                    template = PipelineTemplate.objects.create(
-                        name=job_name,
-                        code=template_code,
-                        language=template_data.get("language", "java"),
-                        language_version=template_data.get("language_version") or "",
-                        framework=template_data.get("framework") or "",
-                        description=template_data.get("description", ""),
-                        is_official=False,
-                        status=CommonStatus.ENABLED,
-                        creator="system_import",
-                        modifier="system_import",
-                    )
+                    if template is None:
+                        template = PipelineTemplate.objects.create(
+                            name=job_name,
+                            code=template_code,
+                            language=template_data.get("language", "java"),
+                            language_version=template_data.get("language_version") or "",
+                            framework=template_data.get("framework") or "",
+                            description=template_data.get("description", ""),
+                            is_official=False,
+                            status=CommonStatus.ENABLED,
+                            creator="system_import",
+                            modifier="system_import",
+                        )
 
                     version = PipelineTemplateVersion.objects.create(
                         template=template,
