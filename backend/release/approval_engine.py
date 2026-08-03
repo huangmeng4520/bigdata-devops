@@ -98,6 +98,9 @@ class ApprovalEngine:
     @staticmethod
     def _current_approvers(rule, already_approved_ids):
         """计算当前可审批人 ID 列表"""
+        if not rule:
+            # 规则缺失（如历史数据 approval_rule=None），无法计算后续审批人，清空列表
+            return []
         if rule.rule_type == 'sequential':
             # 顺序审批：只剩顺序最靠前未审批的人
             remaining = [
