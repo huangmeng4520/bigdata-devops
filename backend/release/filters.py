@@ -191,13 +191,27 @@ class ReleaseBuildLogFilter(django_filters.FilterSet):
 
 
 class ApprovalRuleFilter(django_filters.FilterSet):
-    """审批规则过滤器"""
+    """审批规则过滤器（支持三级作用域过滤）"""
     name = django_filters.CharFilter(lookup_expr='icontains')
     code = django_filters.CharFilter(lookup_expr='icontains')
     environment = django_filters.CharFilter()
     rule_type = django_filters.CharFilter()
     status = django_filters.NumberFilter()
+    project = django_filters.NumberFilter(field_name='project_id')
+    application = django_filters.NumberFilter(field_name='application_id')
+    # 作用域筛选：application/project/global
+    scope = django_filters.CharFilter(method='filter_scope')
 
     class Meta:
         model = ApprovalRule
-        fields = ['name', 'code', 'environment', 'rule_type', 'status']
+        fields = ['name', 'code', 'environment', 'rule_type', 'status', 'project', 'application']
+
+    def filter_scope(self, queryset, name, value):
+        """按作用域层级过滤"""
+        if value == 'global':
+            return queryset.filter(project__isnull=True, application__isnull=True)
+        elif value == 'project':
+            return queryset.filter(project__isnull=False, application__isnull=True)
+        elif value == 'application':
+            return queryset.filter(application__isnull=False)
+        return queryset

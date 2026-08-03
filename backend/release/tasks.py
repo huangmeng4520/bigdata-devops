@@ -1288,3 +1288,45 @@ def module_id_to_obj(module_id):
         return Module.objects.get(id=module_id, is_deleted=False)
     except Module.DoesNotExist:
         return None
+
+
+@shared_task
+def check_approval_timeout():
+    """审批超时扫描任务（每5分钟由 Celery beat 触发）
+
+    扫描所有处于 approval_pending 且超过 deadline 的发布单，
+    按规则的 timeout_action 处理：reject / notify / auto_approve
+    """
+    from django.utils import timezone
+    from .models import ReleaseRecord
+    from .notifications import notify_approval_timeout
+
+    expired = ReleaseRecord.objects.filter(
+        status='approval_pending',
+        approval_deadline__lt=timezone.now(),
+    ).select_related('approval_rule', 'application')
+
+    for release in expired:
+        rule = release.approval_rule
+        action = rule.timeout_action if rule else 'reject'
+
+        if action == 'reject':
+            release.status = 'rejected'
+            release.status_message = '审批超时自动拒绝'
+            release.approval_comment = '系统自动拒绝：审批超时'
+            release.approval_time = timezone.now()
+            release.approval_user = '系统'
+            release.save()
+        elif action == 'auto_approve':
+            release.status = 'approved'
+            release.status_message = '审批超时自动通过'
+            release.approval_comment = '系统自动通过：审批超时'
+            release.approval_time = timezone.now()
+            release.approval_user = '系统'
+            release.save()
+            # 自动触发构建
+            trigger_jenkins_build.delay(release.id)
+        # notify: 仅发通知，状态不变
+        notify_approval_timeout(release)
+
+    logger.info("[Celery] 审批超时扫描完成，处理 %d 单", expired.count())

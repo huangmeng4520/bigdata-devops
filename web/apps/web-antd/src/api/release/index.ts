@@ -4,6 +4,8 @@ export * from './application';
 export * from './pipelineTemplate';
 export * from './environmentStrategy';
 export * from './deployment';
+export * from './approvalRule';
+export * from './approval';
 
 // applicationPipeline 与 application 各自维护独立的同步函数，命名区分避免混淆
 export {
