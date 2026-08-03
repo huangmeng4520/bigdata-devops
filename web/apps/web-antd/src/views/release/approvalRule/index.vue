@@ -116,18 +116,20 @@ const [Grid, gridApi] = useVbenVxeGrid({
   } as VxeTableGridOptions,
 });
 
-function getActionButtons(_row: ApprovalRuleApi.ApprovalRule) {
+function getActionButtons(row: ApprovalRuleApi.ApprovalRule) {
   return [
     {
       code: 'edit',
-      text: '编辑',
+      label: '编辑',
       auth: ['release:approval_rule:edit'],
+      onClick: () => onEdit(row),
     },
     {
       code: 'delete',
-      text: '删除',
+      label: '删除',
       danger: true,
       auth: ['release:approval_rule:delete'],
+      onClick: () => onDelete(row),
     },
   ];
 }
