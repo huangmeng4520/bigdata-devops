@@ -84,10 +84,9 @@ const getDrawerTitle = computed(() => {
 function getNodeClass(node: Recordable<any>) {
   const classes: string[] = [];
   if (node.value?.type === 'button') {
-    classes.push('inline-flex');
-    if (node.index % 3 >= 1) {
-      classes.push('!pl-0');
-    }
+    // button 节点横排收缩在父菜单下，保留层级缩进（padding-left）。
+    // 用 !inline-flex 覆盖 tree.vue 静态 class 里的 flex，确保行内横排。
+    classes.push('!inline-flex');
   }
 
   return classes.join(' ');

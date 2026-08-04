@@ -74,15 +74,6 @@ class Command(BaseCommand):
                 ]
             },
             {
-                'menu_path': '/release/environment-strategy',
-                'menu_name': 'EnvironmentStrategy',
-                'buttons': [
-                    {'name': 'EnvironmentStrategyCreate', 'title': '新增环境策略', 'auth_code': 'release:environment_strategy:create'},
-                    {'name': 'EnvironmentStrategyEdit', 'title': '编辑环境策略', 'auth_code': 'release:environment_strategy:edit'},
-                    {'name': 'EnvironmentStrategyDelete', 'title': '删除环境策略', 'auth_code': 'release:environment_strategy:delete'},
-                ]
-            },
-            {
                 'menu_path': '/release/record',
                 'menu_name': 'ReleaseRecord',
                 'buttons': [
@@ -95,12 +86,19 @@ class Command(BaseCommand):
                     {'name': 'ReleaseRecordReject', 'title': '审批拒绝', 'auth_code': 'release:release_record:reject'},
                     {'name': 'ReleaseRecordRetry', 'title': '重试发布', 'auth_code': 'release:release_record:retry'},
                     {'name': 'ReleaseRecordAIAnalysis', 'title': 'AI分析', 'auth_code': 'release:release_record:ai_analysis'},
-                    {'name': 'ApprovalRuleCreate', 'title': '新增审批规则', 'auth_code': 'release:approval_rule:create'},
-                    {'name': 'ApprovalRuleEdit', 'title': '编辑审批规则', 'auth_code': 'release:approval_rule:edit'},
-                    {'name': 'ApprovalRuleDelete', 'title': '删除审批规则', 'auth_code': 'release:approval_rule:delete'},
                 ]
-            },
-        ]
+        },
+        {
+            # 审批规则按钮权限挂在审批规则菜单下（与 setup_approval_menu.py 一致）
+            'menu_path': '/release/approval-rule',
+            'menu_name': 'ApprovalRule',
+            'buttons': [
+                {'name': 'ApprovalRuleCreate', 'title': '新增审批规则', 'auth_code': 'release:approval_rule:create'},
+                {'name': 'ApprovalRuleEdit', 'title': '编辑审批规则', 'auth_code': 'release:approval_rule:edit'},
+                {'name': 'ApprovalRuleDelete', 'title': '删除审批规则', 'auth_code': 'release:approval_rule:delete'},
+            ]
+        },
+    ]
 
         for menu_config in menus_buttons:
             menu = Menu.objects.filter(

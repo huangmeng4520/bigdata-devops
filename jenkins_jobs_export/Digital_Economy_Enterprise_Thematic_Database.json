@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "Digital_Economy_Enterprise_Thematic_Database",
+    "code": "Digital_Economy_Enterprise_Thematic_Database",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "exact_match test id=409",
+    "git_url": "http://220.163.62.194:12001/front/PublicDataPlatform/digital-economy-enterprise-thematic-database.git"
+  },
+  "version": {
+    "version": "1.0.0",
+    "content": "// Pipeline: http://220.163.62.194:12001/front/PublicDataPlatform/digital-economy-enterprise-thematic-database.git",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

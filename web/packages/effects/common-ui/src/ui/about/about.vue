@@ -22,7 +22,7 @@ defineOptions({
 withDefaults(defineProps<Props>(), {
   description:
     '本项目为基于 Django5 + Vue3（vben-admin）全栈开发的企业级中后台管理系统，支持动态菜单、按钮权限、自动化代码生成、前后端权限联动等功能，适用于多角色、多权限场景的管理后台。\n',
-  name: 'Django Vue3 Admin',
+  name: '运维管理平台',
   title: '关于项目',
 });
 

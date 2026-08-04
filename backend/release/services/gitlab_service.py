@@ -41,17 +41,18 @@ class GitLabService(BaseService):
             "Content-Type": "application/json"
         }
 
-    def _request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
+    def _request(self, method: str, endpoint: str, return_headers: bool = False, **kwargs) -> Dict[str, Any]:
         """
         发送请求到 GitLab API
 
         Args:
             method: HTTP 方法
             endpoint: API 端点
+            return_headers: 是否同时返回响应头（返回 (data, headers) 元组）
             **kwargs: requests 参数
 
         Returns:
-            响应 JSON
+            响应 JSON，如果 return_headers=True 则返回 (data, headers) 元组
 
         Raises:
             DevOpsException: 请求失败
@@ -84,9 +85,10 @@ class GitLabService(BaseService):
                 })
 
             if response.status_code == 204:
-                return {}
+                return ({}, response.headers) if return_headers else {}
 
-            return response.json()
+            data = response.json()
+            return (data, response.headers) if return_headers else data
 
         except requests.exceptions.Timeout:
             self._handle_error("GitLab API 请求超时")
@@ -211,19 +213,25 @@ class GitLabService(BaseService):
         except DevOpsException:
             return False
 
-    def get_project(self, project_id: int) -> Optional[Dict[str, Any]]:
+    def get_project(self, project_id: int, raise_on_error: bool = False) -> Optional[Dict[str, Any]]:
         """
         获取 Project 信息
 
         Args:
             project_id: Project ID
+            raise_on_error: 是否抛出异常（默认 False，兼容旧代码）
 
         Returns:
             Project 信息或 None
+
+        Raises:
+            DevOpsException: 当 raise_on_error=True 且请求失败时
         """
         try:
             return self._request("GET", f"/projects/{project_id}")
         except DevOpsException:
+            if raise_on_error:
+                raise
             return None
 
     def get_project_by_path(self, path: str) -> Optional[Dict[str, Any]]:
@@ -389,17 +397,18 @@ class GitLabService(BaseService):
         })
         return result
 
-    def list_projects(self, group_id: int = None, page: int = 1, per_page: int = 20) -> list:
+    def list_projects(self, group_id: int = None, page: int = 1, per_page: int = 50, with_total: bool = False):
         """
         获取 GitLab Projects 列表
 
         Args:
             group_id: Group ID（可选，不传则获取所有有权限的项目）
             page: 页码
-            per_page: 每页数量
+            per_page: 每页数量（GitLab API 最大 100）
+            with_total: 是否同时返回总数，返回 (data, total) 元组
 
         Returns:
-            Projects 列表
+            Projects 列表，或 (Projects 列表, 总数) 元组
         """
         params = {
             "page": page,
@@ -409,9 +418,13 @@ class GitLabService(BaseService):
         }
         if group_id:
             params["group_id"] = group_id
-        
-        result = self._request("GET", "/projects", params=params)
-        return result
+
+        if with_total:
+            data, headers = self._request("GET", "/projects", return_headers=True, params=params)
+            total = int(headers.get("X-Total", "0"))
+            return data, total
+
+        return self._request("GET", "/projects", params=params)
 
     def search_groups(self, search: str, page: int = 1, per_page: int = 20) -> list:
         """
@@ -433,21 +446,28 @@ class GitLabService(BaseService):
         })
         return result
 
-    def search_projects(self, search: str, page: int = 1, per_page: int = 20) -> list:
+    def search_projects(self, search: str, page: int = 1, per_page: int = 50, with_total: bool = False):
         """
         搜索 Projects
 
         Args:
             search: 搜索关键词
             page: 页码
-            per_page: 每页数量
+            per_page: 每页数量（GitLab API 最大 100）
+            with_total: 是否同时返回总数，返回 (data, total) 元组
 
         Returns:
-            匹配的 Projects 列表
+            匹配的 Projects 列表，或 (Projects 列表, 总数) 元组
         """
-        result = self._request("GET", "/projects", params={
+        params = {
             "search": search,
             "page": page,
             "per_page": per_page
-        })
-        return result
+        }
+
+        if with_total:
+            data, headers = self._request("GET", "/projects", return_headers=True, params=params)
+            total = int(headers.get("X-Total", "0"))
+            return data, total
+
+        return self._request("GET", "/projects", params=params)

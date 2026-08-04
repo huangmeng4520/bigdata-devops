@@ -155,6 +155,15 @@ def create_jenkins_resources(self, app_id: int, force: bool = False):
 
         created_jobs = []
         for config in configs:
+            # 已导入旧 job（通过 import_jenkins_jobs 脚本创建）已有 jenkins_job_name，
+            # 跳过创建，保持原始 job 名不变，避免在 Jenkins 上创建重复 job
+            if config.jenkins_job_name:
+                logger.info(
+                    f"[Celery] 跳过已导入 job 的创建: config_id={config.id}, "
+                    f"jenkins_job_name={config.jenkins_job_name}"
+                )
+                created_jobs.append(config.jenkins_job_name)
+                continue
             env_code = config.environment
             success = jenkins.create_pipeline_job_with_folder(
                 project_code=app.project.code,
@@ -548,21 +557,37 @@ def sync_jenkins_config(self, config_id):
                 content = content.replace(f'${{{key}}}', str(value))
 
         jenkins = JenkinsService()
-        module_code = app.module.code if app.module else app.code
-        folder = f"{app.project.code}/{module_code}/{app.code}"
+
+        # 区分已导入旧 job 和新建 job：
+        # - 旧 job（通过导入脚本创建）已有 jenkins_job_name，按原始路径同步，保持原名不变
+        # - 新建 job 用系统命名规则 folder=project.code/module.code/app.code, name=env_code
+        if config.jenkins_job_name:
+            parts = config.jenkins_job_name.split('/')
+            job_name = parts[-1]
+            folder = '/'.join(parts[:-1]) if len(parts) > 1 else None
+            logger.info(
+                f"[Celery] 已导入旧 job，按原始路径同步: "
+                f"jenkins_job_name={config.jenkins_job_name}, folder={folder}, name={job_name}"
+            )
+        else:
+            module_code = app.module.code if app.module else app.code
+            folder = f"{app.project.code}/{module_code}/{app.code}"
+            job_name = config.environment
+
         env_code = config.environment
+        module_name = app.module.name if app.module else app.name
 
         success = jenkins.update_job_config(
-            name=env_code,
+            name=job_name,
             folder=folder,
             jenkinsfile_content=content,
             git_url=app.git_url,
             branch=app.build_branch,
-            description=f"Pipeline for {app.project.name}/{module_code}/{app.name}/{env_code}"
+            description=f"Pipeline for {app.project.name}/{module_name}/{app.name}/{env_code}"
         )
 
         if success:
-            full_job_name = f"{folder}/{env_code}"
+            full_job_name = f"{folder}/{job_name}" if folder else job_name
             config.jenkins_job_name = full_job_name
             config.jenkins_sync_status = 2
             config.jenkins_sync_time = timezone.now()
@@ -609,10 +634,23 @@ def _sync_pipeline_config(jenkins, app, config, folder):
             content = content.replace(f'${{{key}}}', str(value))
 
     env_code = config.environment
-    job_name = env_code
-    job_folder = folder
-
     module_name = app.module.name if app.module else app.name
+
+    # 区分已导入旧 job 和新建 job：
+    # - 旧 job（通过导入脚本创建）已有 jenkins_job_name，按原始路径同步
+    # - 新建 job 用调用方传入的 folder + env_code 作为 name
+    if config.jenkins_job_name:
+        parts = config.jenkins_job_name.split('/')
+        job_name = parts[-1]
+        job_folder = '/'.join(parts[:-1]) if len(parts) > 1 else None
+        logger.info(
+            f"[Celery] 已导入旧 job，按原始路径同步: "
+            f"jenkins_job_name={config.jenkins_job_name}, folder={job_folder}, name={job_name}"
+        )
+    else:
+        job_name = env_code
+        job_folder = folder
+
     success = jenkins.update_job_config(
         name=job_name,
         folder=job_folder,
@@ -623,7 +661,7 @@ def _sync_pipeline_config(jenkins, app, config, folder):
     )
 
     if success:
-        full_job_name = f"{job_folder}/{job_name}"
+        full_job_name = f"{job_folder}/{job_name}" if job_folder else job_name
         config.jenkins_job_name = full_job_name
         config.jenkins_sync_status = 2
         config.jenkins_sync_time = timezone.now()
@@ -1055,3 +1093,240 @@ def sync_code_repository_gitlab(self, repo_id: int):
     except Exception as e:
         logger.exception(f"[Celery] 代码仓库同步异常: {e}")
         return {"success": False, "error": str(e)}
+
+
+@shared_task(bind=True, max_retries=1)
+def import_gitlab_projects_batch(self, items: list, username: str):
+    """
+    批量从 GitLab 导入 Projects（Celery 异步任务）
+
+    Args:
+        items: 待导入项列表，每项包含:
+            - gitlab_project_id: GitLab Project ID
+            - project_id: 可选，业务项目 ID
+            - module_id: 可选，业务模块 ID
+        username: 创建人用户名
+    """
+    from django.db import IntegrityError
+    from .models import CodeRepository, Project, Module
+    from .services import GitLabService, DevOpsException
+
+    logger.info(f"[Celery] 开始批量导入 GitLab Projects: 共 {len(items)} 个, 操作人={username}")
+
+    gitlab = GitLabService()
+    success_count = 0
+    fail_count = 0
+    results = []
+
+    for item in items:
+        gitlab_project_id = item.get("gitlab_project_id")
+        project_id = item.get("project_id")
+        module_id = item.get("module_id")
+
+        logger.info(f"[Celery] 正在导入 GitLab Project {gitlab_project_id} ...")
+
+        # 1. 从 GitLab API 获取项目信息（抛出详细异常）
+        try:
+            project_info = gitlab.get_project(gitlab_project_id, raise_on_error=True)
+        except DevOpsException as e:
+            fail_count += 1
+            error_msg = f"GitLab API 错误: {e.message}"
+            results.append({
+                "gitlab_project_id": gitlab_project_id,
+                "status": "failed",
+                "message": error_msg,
+            })
+            logger.error(f"[Celery] {error_msg}")
+            continue
+
+        if not project_info:
+            fail_count += 1
+            results.append({
+                "gitlab_project_id": gitlab_project_id,
+                "status": "failed",
+                "message": "GitLab Project 不存在（API 返回空）"
+            })
+            logger.warning(f"[Celery] GitLab Project {gitlab_project_id} 不存在")
+            continue
+
+        project_path = project_info.get("path", "")
+        project_name = project_info.get("name", "")
+
+        # 2. 路径截断检查（兼容超长路径）
+        if len(project_path) > 256:
+            fail_count += 1
+            error_msg = f"仓库路径过长: {project_path} ({len(project_path)}字符，最大256)"
+            results.append({
+                "gitlab_project_id": gitlab_project_id,
+                "status": "failed",
+                "message": error_msg,
+            })
+            logger.error(f"[Celery] {error_msg}")
+            continue
+
+        # 3. 自动匹配项目和模块
+        project_obj = project_id_to_obj(project_id) if project_id else None
+        module_obj = module_id_to_obj(module_id) if module_id else None
+
+        if project_obj is None and module_obj is None:
+            namespace = project_info.get("namespace", {})
+            full_path = namespace.get("full_path", "")
+            if full_path:
+                path_parts = full_path.split("/")
+                if len(path_parts) >= 1:
+                    try:
+                        project_obj = Project.objects.get(code=path_parts[0], is_deleted=False)
+                    except Project.DoesNotExist:
+                        pass
+                    if project_obj and len(path_parts) >= 2:
+                        try:
+                            module_obj = Module.objects.get(
+                                project=project_obj, code=path_parts[1], is_deleted=False
+                            )
+                        except Module.DoesNotExist:
+                            pass
+
+        # 4. 开始导入
+        try:
+            # 检查是否已被软删除，是则恢复
+            deleted_repo = CodeRepository.objects.filter(
+                gitlab_project_id=gitlab_project_id, is_deleted=True
+            ).first()
+            if deleted_repo:
+                deleted_repo.is_deleted = False
+                deleted_repo.name = project_name
+                deleted_repo.code = project_path
+                deleted_repo.git_url = project_info.get("ssh_url_to_repo", "")
+                deleted_repo.git_http_url = project_info.get("http_url_to_repo", "")
+                deleted_repo.project = project_obj
+                deleted_repo.module = module_obj
+                deleted_repo.repository_type = 'gitlab'
+                try:
+                    deleted_repo.save()
+                except IntegrityError:
+                    fail_count += 1
+                    results.append({
+                        "gitlab_project_id": gitlab_project_id,
+                        "status": "failed",
+                        "message": f"恢复失败：项目下已存在同名代码仓库（{project_path}）"
+                    })
+                    logger.warning(f"[Celery] 恢复失败: {project_path} 已存在")
+                    continue
+                success_count += 1
+                results.append({
+                    "gitlab_project_id": gitlab_project_id,
+                    "status": "restored",
+                    "name": project_name
+                })
+                logger.info(f"[Celery] 恢复成功: {project_name}")
+            else:
+                repo = CodeRepository.objects.create(
+                    name=project_name,
+                    code=project_path,
+                    gitlab_project_id=gitlab_project_id,
+                    git_url=project_info.get("ssh_url_to_repo", ""),
+                    git_http_url=project_info.get("http_url_to_repo", ""),
+                    project=project_obj,
+                    module=module_obj,
+                    repository_type='gitlab',
+                    creator=username
+                )
+                success_count += 1
+                results.append({
+                    "gitlab_project_id": gitlab_project_id,
+                    "status": "success",
+                    "id": repo.id,
+                    "name": project_name
+                })
+                logger.info(f"[Celery] 导入成功: {project_name} (id={repo.id})")
+        except IntegrityError as e:
+            fail_count += 1
+            results.append({
+                "gitlab_project_id": gitlab_project_id,
+                "status": "failed",
+                "message": f"数据库约束冲突: {str(e)}"
+            })
+            logger.error(f"[Celery] 导入失败 (IntegrityError): gitlab_project_id={gitlab_project_id}, error={e}")
+        except Exception as e:
+            fail_count += 1
+            results.append({
+                "gitlab_project_id": gitlab_project_id,
+                "status": "failed",
+                "message": f"导入异常: {type(e).__name__}: {str(e)}"
+            })
+            logger.exception(f"[Celery] 导入异常: gitlab_project_id={gitlab_project_id}")
+
+    summary = f"批量导入完成: 成功 {success_count} 个, 失败 {fail_count} 个"
+    logger.info(f"[Celery] {summary}")
+    return {
+        "success": True,
+        "success_count": success_count,
+        "fail_count": fail_count,
+        "total": len(items),
+        "results": results,
+        "message": summary
+    }
+
+
+def project_id_to_obj(project_id):
+    """安全获取 Project 对象"""
+    if not project_id:
+        return None
+    from .models import Project
+    try:
+        return Project.objects.get(id=project_id, is_deleted=False)
+    except Project.DoesNotExist:
+        return None
+
+
+def module_id_to_obj(module_id):
+    """安全获取 Module 对象"""
+    if not module_id:
+        return None
+    from .models import Module
+    try:
+        return Module.objects.get(id=module_id, is_deleted=False)
+    except Module.DoesNotExist:
+        return None
+
+
+@shared_task
+def check_approval_timeout():
+    """审批超时扫描任务（每5分钟由 Celery beat 触发）
+
+    扫描所有处于 approval_pending 且超过 deadline 的发布单，
+    按规则的 timeout_action 处理：reject / notify / auto_approve
+    """
+    from django.utils import timezone
+    from .models import ReleaseRecord
+    from .notifications import notify_approval_timeout
+
+    expired = ReleaseRecord.objects.filter(
+        status='approval_pending',
+        approval_deadline__lt=timezone.now(),
+    ).select_related('approval_rule', 'application')
+
+    for release in expired:
+        rule = release.approval_rule
+        action = rule.timeout_action if rule else 'reject'
+
+        if action == 'reject':
+            release.status = 'rejected'
+            release.status_message = '审批超时自动拒绝'
+            release.approval_comment = '系统自动拒绝：审批超时'
+            release.approval_time = timezone.now()
+            release.approval_user = '系统'
+            release.save()
+        elif action == 'auto_approve':
+            release.status = 'approved'
+            release.status_message = '审批超时自动通过'
+            release.approval_comment = '系统自动通过：审批超时'
+            release.approval_time = timezone.now()
+            release.approval_user = '系统'
+            release.save()
+            # 自动触发构建
+            trigger_jenkins_build.delay(release.id)
+        # notify: 仅发通知，状态不变
+        notify_approval_timeout(release)
+
+    logger.info("[Celery] 审批超时扫描完成，处理 %d 单", expired.count())

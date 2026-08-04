@@ -44,8 +44,8 @@ class MenuSerializer(CustomModelSerializer):
         read_only_fields = ['id', 'create_time', 'update_time']
 
     def get_children(self, obj):
-        """获取子菜单"""
-        children = obj.children.all().order_by('sort')
+        """获取子菜单（排除软删除）"""
+        children = obj.children.filter(is_deleted=False).order_by('sort')
         if children:
             return MenuSerializer(children, many=True).data
         return []
@@ -78,7 +78,7 @@ class MenuSerializer(CustomModelSerializer):
 class MenuUserSerializer(MenuSerializer):
     def get_children(self, obj):
         request = self.context.get('request')
-        children_qs = obj.children.exclude(type='button').order_by('sort')
+        children_qs = obj.children.exclude(type='button').filter(is_deleted=False).order_by('sort')
         if request and hasattr(request, 'user') and request.user.is_authenticated and not request.user.is_superuser:
             role_ids = request.user.role.values_list('id', flat=True)
             children_qs = children_qs.filter(role__id__in=role_ids).distinct()
@@ -95,7 +95,7 @@ class MenuMetaViewSet(viewsets.ModelViewSet):
 
 class MenuViewSet(CustomModelViewSet):
     """菜单管理视图集"""
-    queryset = Menu.objects.filter(pid__isnull=True).order_by('sort', 'id', 'status').prefetch_related('children')
+    queryset = Menu.objects.filter(pid__isnull=True, is_deleted=False).order_by('sort', 'id', 'status').prefetch_related('children')
     serializer_class = MenuSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['status', 'type', 'pid', 'name']
@@ -136,10 +136,10 @@ class MenuViewSet(CustomModelViewSet):
     def user_menu(self, request):
         user = self.request.user
         if user.is_superuser:
-            menus = Menu.objects.filter(pid__isnull=True).exclude(type='button').order_by('sort')
+            menus = Menu.objects.filter(pid__isnull=True, is_deleted=False).exclude(type='button').order_by('sort')
         else:
             role_ids = user.role.values_list('id', flat=True)
-            menus = Menu.objects.filter(pid__isnull=True,
+            menus = Menu.objects.filter(pid__isnull=True, is_deleted=False,
                                         role__id__in=role_ids
                                         ).exclude(type='button').order_by('sort').distinct()
         menus_data = MenuUserSerializer(menus, many=True, context={'request': request}).data

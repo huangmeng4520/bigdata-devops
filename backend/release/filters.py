@@ -7,7 +7,6 @@ from .models import (
     Project, Module, Application, CodeRepository, ConfigPackage, SyncLog,
     PipelineTemplate, PipelineTemplateVersion,
     ApplicationPipelineConfig, ApplicationPipelineVersion,
-    EnvironmentStrategy,
     ReleaseRecord, ReleaseBuildLog, ApprovalRule
 )
 
@@ -29,12 +28,13 @@ class CodeRepositoryFilter(django_filters.FilterSet):
     code = django_filters.CharFilter(lookup_expr='icontains')
     project = django_filters.NumberFilter()
     module = django_filters.NumberFilter()
+    module__isnull = django_filters.BooleanFilter(field_name='module', lookup_expr='isnull')
     repository_type = django_filters.CharFilter()
     status = django_filters.NumberFilter()
 
     class Meta:
         model = CodeRepository
-        fields = ['name', 'code', 'project', 'module', 'repository_type', 'status']
+        fields = ['name', 'code', 'project', 'module', 'module__isnull', 'repository_type', 'status']
 
 
 class ModuleFilter(django_filters.FilterSet):
@@ -141,19 +141,6 @@ class ApplicationPipelineVersionFilter(django_filters.FilterSet):
         fields = ['config', 'version', 'generated_by']
 
 
-class EnvironmentStrategyFilter(django_filters.FilterSet):
-    """环境策略过滤器"""
-    name = django_filters.CharFilter(lookup_expr='icontains')
-    code = django_filters.CharFilter(lookup_expr='icontains')
-    environment = django_filters.CharFilter()
-    is_default = django_filters.BooleanFilter()
-    status = django_filters.NumberFilter()
-
-    class Meta:
-        model = EnvironmentStrategy
-        fields = ['name', 'code', 'environment', 'is_default', 'status']
-
-
 # ============================================================
 # 发布管理相关过滤器
 # ============================================================
@@ -190,13 +177,27 @@ class ReleaseBuildLogFilter(django_filters.FilterSet):
 
 
 class ApprovalRuleFilter(django_filters.FilterSet):
-    """审批规则过滤器"""
+    """审批规则过滤器（支持三级作用域过滤）"""
     name = django_filters.CharFilter(lookup_expr='icontains')
     code = django_filters.CharFilter(lookup_expr='icontains')
     environment = django_filters.CharFilter()
     rule_type = django_filters.CharFilter()
     status = django_filters.NumberFilter()
+    project = django_filters.NumberFilter(field_name='project_id')
+    application = django_filters.NumberFilter(field_name='application_id')
+    # 作用域筛选：application/project/global
+    scope = django_filters.CharFilter(method='filter_scope')
 
     class Meta:
         model = ApprovalRule
-        fields = ['name', 'code', 'environment', 'rule_type', 'status']
+        fields = ['name', 'code', 'environment', 'rule_type', 'status', 'project', 'application']
+
+    def filter_scope(self, queryset, name, value):
+        """按作用域层级过滤"""
+        if value == 'global':
+            return queryset.filter(project__isnull=True, application__isnull=True)
+        elif value == 'project':
+            return queryset.filter(project__isnull=False, application__isnull=True)
+        elif value == 'application':
+            return queryset.filter(application__isnull=False)
+        return queryset

@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "data-registry-portal-web-test",
+    "code": "data-registry-portal-web-test",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "数据登记平台前端 （包含 portal和admin）",
+    "git_url": "ssh://git@220.163.62.194:12002/front/PublicDataPlatform/data-resource-registration-web"
+  },
+  "version": {
+    "version": "1.0.3",
+    "content": "pipeline {\n    agent any\n\n    environment {\n        REMOTE_HOST = '20.48.1.68' // 远程服务器地址\n        REMOTE_USER = 'root' // 远程服务器用户名\n        REMOTE_CREDENTIALS_ID = 'server-18-credentials-id' // Jenkins中保存的远程服务器SSH凭证ID\n        REMOTE_ADDRESS = '/data/soft/sjzydj/test/'  //远程服务器web文件地址\n        TIMESTAMP = new Date().format(\"yyyyMMddHHmmss\", TimeZone.getTimeZone('UTC+8'))\n    }\n\n    stages {\n        stage('Git') {\n            steps {\n                echo \"Trying to checkout code from gitlab branch: ${params.Branch}\"\n                checkout scmGit(branches: [[name: \"${params.Branch}\"]], extensions: [], userRemoteConfigs: [[credentialsId: 'SSH-KEY-FOR-GITLAB', url: '${GIALAB_ADDRESS}/front/PublicDataPlatform/data-resource-registration-web']])\n            }\n        }\n\n        stage('Npm Install') {\n            steps {\n                //  nvm(\"v20.13.1\") {\n                 nvm(\"v22.20.0\") {\n                    sh 'node -v'\n                    sh 'pnpm -v'\n                    sh 'pnpm install --no-frozen-lockfile'\n                }\n        \n        \n            }\n        }\n\n        stage('Npm Build') {\n            steps {\n        //         // sh 'npm run build'\n        //         nvm(\"v18.20.2\") {\n                    sh 'pnpm run build:test'\n        //         }\n              \n            }\n        }\n          \n        \n        stage('Deploy to Remote') {\n            steps {\n                script {\n                    sh 'pwd'\n                    sh 'tar -zcvf ./dist-portal.tar.gz ./dist-test-client'\n                    sh 'scp dist-portal.tar.gz root@${REMOTE_HOST}:${REMOTE_ADDRESS} ' \n                    \n                    sh 'tar -zcvf ./dist-manage.tar.gz ./dist-test-admin'\n                    sh 'scp dist-manage.tar.gz root@${REMOTE_HOST}:${REMOTE_ADDRESS} ' \n                    \n                    sshagent([REMOTE_CREDENTIALS_ID]) {\n                        sh \"\"\"\n                            ssh ${REMOTE_USER}@${REMOTE_HOST} '\n                            cd ${REMOTE_ADDRESS}  &&\n                            \n                            mv ./dist-portal.tar.gz ./portal  &&\n                            mv ./dist-manage.tar.gz ./manage  &&\n                            \n                            cd ./portal  &&\n                            if [ -d \"dist/\" ];then\n                                mv dist/ dist-${TIMESTAMP}/\n                            fi  &&\n                            tar -zxvf dist-portal.tar.gz  &&\n                            rm -f dist-portal.tar.gz &&\n                            mv dist-test-client/ dist/ &&\n                            \n                            cd ${REMOTE_ADDRESS}  &&\n                            cd ./manage  &&\n                            if [ -d \"dist/\" ];then\n                                mv dist/ dist-${TIMESTAMP}/\n                            fi  &&\n                            tar -zxvf dist-manage.tar.gz  &&\n                            rm -f dist-manage.tar.gz &&\n                            mv dist-test-admin/ dist/ \n                            '\n                           \"\"\"\n                    }\n                }\n            }\n        }\n        \n        \n    }\n}",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

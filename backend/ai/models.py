@@ -315,7 +315,7 @@ class ChatMessage(CoreModel):
         db_comment="消息类型",
     )
     reply_id = models.BigIntegerField(null=True, blank=True, verbose_name="回复编号", db_comment="回复编号")
-    content = models.CharField(max_length=2048, verbose_name="消息内容", db_comment="消息内容")
+    content = models.TextField(verbose_name="消息内容", db_comment="消息内容")
     use_context = models.BooleanField(default=False, verbose_name="是否携带上下文", db_comment="是否携带上下文")
     segment_ids = models.CharField(
         max_length=2048, null=True, blank=True,

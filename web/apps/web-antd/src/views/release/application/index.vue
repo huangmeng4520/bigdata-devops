@@ -54,7 +54,7 @@ const moduleOptions = ref<{ label: string; value: number }[]>([]);
 
 // 加载项目列表
 async function loadProjects() {
-  const result = await getProjectList({ page: 1, page_size: 1000 });
+  const result = await getProjectList({ page: 1, pageSize: 999 });
   const list = Array.isArray(result) ? result : (result?.items || []);
   projectOptions.value = list.map((item: any) => ({
     label: item.name,
@@ -67,7 +67,7 @@ loadProjects();
 
 // 加载模块列表
 async function loadModules(projectId?: number) {
-  const params: Record<string, any> = { page: 1, page_size: 1000, status: 1 };
+  const params: Record<string, any> = { page: 1, pageSize: 999, status: 1 };
   if (projectId) params.project = projectId;
   const result = await getModuleList(params);
   const list = Array.isArray(result) ? result : (result?.items || []);
@@ -260,7 +260,7 @@ const [Grid, gridApi] = useVbenVxeGrid({
         query: async ({ page }, formValues) => {
           const params = {
             page: page?.currentPage,
-            page_size: page?.pageSize,
+            pageSize: page?.pageSize,
             ...formValues,
           };
           const result = await getApplicationList(params);

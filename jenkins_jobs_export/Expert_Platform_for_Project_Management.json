@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "Expert_Platform_for_Project_Management",
+    "code": "Expert_Platform_for_Project_Management",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "exact_match test id=397",
+    "git_url": "http://220.163.62.194:12001/front/gov/expert-platform-for-project-management.git"
+  },
+  "version": {
+    "version": "1.0.0",
+    "content": "// Pipeline: http://220.163.62.194:12001/front/gov/expert-platform-for-project-management.git",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

@@ -86,7 +86,7 @@ async function loadConfigs() {
   if (!app.value) return;
   loading.value = true;
   try {
-    const result = await getConfigList({ page: 1, application: app.value.id, page_size: 100 });
+    const result = await getConfigList({ page: 1, application: app.value.id, pageSize: 100 });
     configs.value = result.items || [];
   } catch {
     message.error('加载配置失败');
@@ -97,7 +97,7 @@ async function loadConfigs() {
 
 async function loadTemplates() {
   try {
-    const result = await getTemplateList({ page: 1, page_size: 100, status: 1 });
+    const result = await getTemplateList({ page: 1, pageSize: 100, status: 1 });
     templates.value = (result as any)?.items ?? (Array.isArray(result) ? result : []);
   } catch {
     message.error('加载模板列表失败');
@@ -278,7 +278,7 @@ async function handleViewVersions() {
   if (!drawerConfig.value) return;
   drawerShowVersions.value = true;
   try {
-    const result = await getConfigVersions(drawerConfig.value.id, { page: 1, page_size: 100 });
+    const result = await getConfigVersions(drawerConfig.value.id, { page: 1, pageSize: 100 });
     drawerVersions.value = result.items || [];
   } catch {
     message.error('加载版本历史失败');

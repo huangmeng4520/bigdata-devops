@@ -83,8 +83,8 @@ class CodeRepository(models.Model):
         'Module', on_delete=models.SET_NULL,
         null=True, blank=True, related_name="code_repositories", verbose_name="所属模块"
     )
-    name = models.CharField(max_length=64, verbose_name="仓库名称")
-    code = models.CharField(max_length=32, verbose_name="仓库编码")
+    name = models.CharField(max_length=256, verbose_name="仓库名称")
+    code = models.CharField(max_length=256, verbose_name="仓库编码")
     repository_type = models.CharField(max_length=16, choices=TYPE_CHOICES, default='gitlab', verbose_name="仓库类型")
     gitlab_project_id = models.IntegerField(null=True, blank=True, verbose_name="GitLab Project ID")
     git_url = models.CharField(max_length=256, null=True, blank=True, verbose_name="Git SSH 地址")
@@ -162,8 +162,8 @@ class Application(CoreModel):
         null=True, blank=True,
         related_name="applications", verbose_name="所属模块"
     )
-    name = models.CharField(max_length=64, verbose_name="应用名称")
-    code = models.CharField(max_length=32, verbose_name="应用编码")
+    name = models.CharField(max_length=128, verbose_name="应用名称")
+    code = models.CharField(max_length=128, verbose_name="应用编码")
     description = models.CharField(max_length=256, null=True, blank=True, verbose_name="应用描述")
     app_type = models.CharField(max_length=16, choices=APP_TYPE_CHOICES, verbose_name="应用类型")
     # 代码仓库关联
@@ -509,31 +509,6 @@ class ApplicationPipelineVersion(CoreModel):
         return f"{self.config.application.name} - v{self.version}"
 
 
-class EnvironmentStrategy(CoreModel):
-    """环境策略"""
-    name = models.CharField(max_length=64, verbose_name="策略名称")
-    code = models.CharField(max_length=32, unique=True, verbose_name="策略编码")
-    environment = models.CharField(max_length=32, verbose_name="环境")
-    requires_approval = models.BooleanField(default=False, verbose_name="需要审批")
-    auto_deploy = models.BooleanField(default=False, verbose_name="自动部署")
-    description = models.TextField(blank=True, null=True, verbose_name="描述")
-    is_default = models.BooleanField(default=False, verbose_name="默认策略")
-    status = models.IntegerField(
-        choices=CommonStatus.choices,
-        default=CommonStatus.ENABLED,
-        verbose_name="状态"
-    )
-
-    class Meta:
-        db_table = "release_environment_strategy"
-        verbose_name = "环境策略"
-        verbose_name_plural = verbose_name
-        ordering = ["-create_time"]
-
-    def __str__(self):
-        return self.name
-
-
 # ============================================================
 # 发布管理相关模型
 # ============================================================
@@ -577,6 +552,25 @@ class ReleaseRecord(CoreModel):
     approval_time = models.DateTimeField(null=True, blank=True, verbose_name="审批时间")
     approval_user = models.CharField(max_length=64, blank=True, null=True, verbose_name="审批人")
     approval_comment = models.TextField(blank=True, null=True, verbose_name="审批意见")
+
+    # 增强审批：规则匹配与多人流转
+    approval_rule = models.ForeignKey(
+        'release.ApprovalRule', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='releases',
+        verbose_name="生效审批规则"
+    )
+    approval_scope = models.CharField(
+        max_length=16, blank=True, null=True,
+        verbose_name="规则作用域"
+    )  # application / project / global
+    approved_count = models.IntegerField(default=0, verbose_name="已通过数")
+    required_count = models.IntegerField(default=1, verbose_name="需通过数")
+    current_approver_ids = models.JSONField(
+        default=list, blank=True, verbose_name="当前待审批人ID"
+    )
+    approval_deadline = models.DateTimeField(
+        null=True, blank=True, verbose_name="审批截止时间"
+    )
     
     # Jenkins 构建信息
     jenkins_job_name = models.CharField(max_length=256, blank=True, null=True, verbose_name="Jenkins Job 名称")
@@ -654,41 +648,138 @@ class ReleaseBuildLog(CoreModel):
 
 
 class ApprovalRule(CoreModel):
-    """审批规则"""
-    
+    """审批规则 —— 支持全局/项目/应用三级作用域"""
+
     RULE_TYPE_CHOICES = [
         ('single', '单人审批'),
         ('any', '任意一人审批'),
         ('all', '全部审批'),
         ('sequential', '顺序审批'),
     ]
-    
+
+    TIMEOUT_ACTION_CHOICES = [
+        ('reject', '超时自动拒绝'),
+        ('notify', '超时仅提醒'),
+        ('auto_approve', '超时自动通过'),
+    ]
+
     name = models.CharField(max_length=64, verbose_name="规则名称")
     code = models.CharField(max_length=32, unique=True, verbose_name="规则编码")
+
+    # 作用域（三级，优先级：应用 > 项目 > 全局）
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE,
+        null=True, blank=True, related_name='approval_rules',
+        verbose_name="适用项目（空=全局）"
+    )
+    application = models.ForeignKey(
+        Application, on_delete=models.CASCADE,
+        null=True, blank=True, related_name='approval_rules',
+        verbose_name="适用应用（空=项目级或全局）"
+    )
     environment = models.CharField(max_length=32, verbose_name="适用环境")
+
     rule_type = models.CharField(
         max_length=32, choices=RULE_TYPE_CHOICES,
         verbose_name="规则类型"
     )
-    
-    # 审批人配置: [{"id": 1, "name": "张三", "order": 1}]
+
+    # 审批人配置: [{"user_id": 1, "username": "张三", "order": 1}]
     approvers = models.JSONField(default=list, verbose_name="审批人列表")
-    
+
     # 条件配置
     min_approvers = models.IntegerField(default=1, verbose_name="最少审批人数")
-    
+
+    # 超时与通知
+    timeout_hours = models.IntegerField(
+        default=24, null=True, blank=True, verbose_name="审批超时(小时)"
+    )
+    timeout_action = models.CharField(
+        max_length=16, default='reject',
+        choices=TIMEOUT_ACTION_CHOICES,
+        verbose_name="超时处理策略"
+    )
+    notify_channels = models.JSONField(
+        default=list, blank=True, verbose_name="通知渠道"
+    )  # ["site","email","feishu"]
+
     # 状态
     status = models.IntegerField(
         choices=CommonStatus.choices,
         default=CommonStatus.ENABLED,
         verbose_name="状态"
     )
-    
+
     class Meta:
         db_table = "release_approval_rule"
         verbose_name = "审批规则"
         verbose_name_plural = verbose_name
         ordering = ["-create_time"]
+        constraints = [
+            # 同一作用域+环境下规则唯一
+            models.UniqueConstraint(
+                fields=['environment', 'project', 'application'],
+                condition=models.Q(is_deleted=False),
+                name='uk_rule_per_scope',
+                violation_error_message='该作用域+环境下已存在审批规则',
+            ),
+        ]
 
     def __str__(self):
         return self.name
+
+    @property
+    def scope(self):
+        """返回作用域层级"""
+        if self.application_id:
+            return 'application'
+        if self.project_id:
+            return 'project'
+        return 'global'
+
+
+class ApprovalRecord(CoreModel):
+    """审批操作记录 —— 支持多人会签/顺序审批留痕"""
+
+    ACTION_CHOICES = [
+        ('approve', '通过'),
+        ('reject', '拒绝'),
+        ('transfer', '转交'),
+        ('add_sign', '加签'),
+    ]
+
+    release = models.ForeignKey(
+        ReleaseRecord, on_delete=models.CASCADE,
+        related_name='approval_records', verbose_name="关联发布记录"
+    )
+    rule = models.ForeignKey(
+        ApprovalRule, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='records', verbose_name="关联审批规则"
+    )
+    approver_id = models.IntegerField(verbose_name="审批人ID")
+    approver_name = models.CharField(max_length=64, verbose_name="审批人姓名")
+    order = models.IntegerField(default=0, verbose_name="审批顺序")
+
+    action = models.CharField(
+        max_length=16, choices=ACTION_CHOICES,
+        verbose_name="操作类型"
+    )
+    comment = models.TextField(blank=True, verbose_name="审批意见")
+    acted_at = models.DateTimeField(verbose_name="操作时间")
+
+    # 转交/加签目标
+    delegate_to_id = models.IntegerField(
+        null=True, blank=True, verbose_name="转交目标人ID"
+    )
+    delegate_to_name = models.CharField(
+        max_length=64, blank=True, verbose_name="转交目标人姓名"
+    )
+
+    class Meta:
+        db_table = "release_approval_record"
+        verbose_name = "审批操作记录"
+        verbose_name_plural = verbose_name
+        ordering = ["order", "acted_at"]
+
+    def __str__(self):
+        return f"{self.release} - {self.approver_name} - {self.get_action_display()}"

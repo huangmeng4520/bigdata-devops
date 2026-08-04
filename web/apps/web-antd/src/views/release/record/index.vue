@@ -27,9 +27,10 @@ import {
   RELEASE_STATUS_MAP,
   retryBuild,
 } from '#/api/release/record';
+import { getMyApprovalTasks } from '#/api/release';
 import { hasPermission } from '#/utils/permission';
 
-import ApprovalModal from './modules/ApprovalModal.vue';
+import ApprovalDetailDrawer from './modules/ApprovalDetailDrawer.vue';
 import BuildLogModal from './modules/BuildLogModal.vue';
 
 // 搜索表单
@@ -40,6 +41,9 @@ const searchForm = reactive({
   released_by: '',
   dateRange: [] as any[],
 });
+
+// 是否处于"我的待办"模式
+const myTodoMode = ref(false);
 
 // 分页
 const pagination = reactive({
@@ -60,7 +64,7 @@ const tableData = ref<ReleaseRecord[]>([]);
 // 弹窗引用
 const router = useRouter();
 const buildLogModalRef = ref();
-const approvalModalRef = ref();
+const approvalDetailDrawerRef = ref();
 
 // 表格列定义
 const columns: TableColumnsType = [
@@ -111,16 +115,98 @@ const columns: TableColumnsType = [
   {
     title: '审批状态',
     dataIndex: 'require_approval',
-    width: 100,
+    width: 200,
     customRender: ({ record }) => {
-      if (!record.require_approval) return '-';
+      // 判断是否涉及审批：require_approval / approval_user / approval_rule_name 任一为真
+      const hasApproval =
+        record.require_approval ||
+        record.approval_user ||
+        record.approval_rule_name;
+
+      // 免审直发：没有任何审批相关字段
+      if (!hasApproval) {
+        return h(Tag, { color: 'default' }, () => '免审');
+      }
+
+      // 待审批：展示节点进度 + 当前审批人
       if (record.status === 'approval_pending') {
-        return h(Tag, { color: 'warning' }, () => '待审批');
+        const approved = record.approved_count ?? 0;
+        const required = record.required_count ?? 0;
+        const approverNames = record.current_approver_names ?? [];
+        const stageText =
+          required > 0 ? `待审批 ${approved}/${required}` : '待审批';
+        const children = [
+          h(
+            Tag,
+            { color: 'warning', style: 'margin: 0 0 4px 0;' },
+            () => stageText,
+          ),
+        ];
+        if (approverNames.length) {
+          // 当前审批人最多展示 2 个，超出折叠
+          const shown = approverNames.slice(0, 2);
+          const extra = approverNames.length - shown.length;
+          const text =
+            extra > 0
+              ? `当前：${shown.join('、')} 等${approverNames.length}人`
+              : `当前：${shown.join('、')}`;
+          children.push(
+            h(
+              'div',
+              { style: 'font-size: 12px; color: #666; line-height: 1.4;' },
+              text,
+            ),
+          );
+        }
+        return h('div', children);
       }
-      if (record.approval_user) {
-        return h(Tag, { color: 'success' }, () => record.approval_user);
+
+      // 已拒绝
+      if (record.status === 'rejected') {
+        return h('div', [
+          h(
+            Tag,
+            { color: 'error', style: 'margin: 0 0 4px 0;' },
+            () => '已拒绝',
+          ),
+          h(
+            'div',
+            { style: 'font-size: 12px; color: #666; line-height: 1.4;' },
+            record.approval_user
+              ? `拒绝人：${record.approval_user}`
+              : '已拒绝',
+          ),
+        ]);
       }
-      return '-';
+
+      // 已审批通过（approved 瞬时状态 + building/build_success/build_failed/deployed 等后续状态）
+      // 判定条件：approval_user 有值，或 approved_count >= required_count
+      const approvedCount = record.approved_count ?? 0;
+      const requiredCount = record.required_count ?? 0;
+      const isApproved =
+        record.status === 'approved' ||
+        record.approval_user ||
+        (requiredCount > 0 && approvedCount >= requiredCount);
+
+      if (isApproved) {
+        return h('div', [
+          h(
+            Tag,
+            { color: 'success', style: 'margin: 0 0 4px 0;' },
+            () => '已通过',
+          ),
+          h(
+            'div',
+            { style: 'font-size: 12px; color: #666; line-height: 1.4;' },
+            record.approval_user
+              ? `审批人：${record.approval_user}`
+              : `已通过 ${approvedCount}/${requiredCount}`,
+          ),
+        ]);
+      }
+
+      // 兜底：有审批配置但状态未知
+      return h(Tag, { color: 'default' }, () => '免审');
     },
   },
   {
@@ -136,7 +222,7 @@ const columns: TableColumnsType = [
   {
     title: '操作',
     key: 'action',
-    width: 200,
+    width: 260,
     fixed: 'right',
   },
 ];
@@ -147,7 +233,7 @@ async function loadData() {
   try {
     const params: any = {
       page: pagination.current,
-      page_size: pagination.pageSize,
+      pageSize: pagination.pageSize,
     };
 
     if (searchForm.application_name) {
@@ -167,7 +253,10 @@ async function loadData() {
       params.end_date = searchForm.dateRange[1].format('YYYY-MM-DD');
     }
 
-    const res = await getReleaseList(params);
+    // 我的待办模式调用独立接口，否则调用发布记录列表
+    const res = myTodoMode.value
+      ? await getMyApprovalTasks(params)
+      : await getReleaseList(params);
     // 后端返回格式: {total: number, items: [...]}
     tableData.value = res.items || [];
     pagination.total = res.total || 0;
@@ -177,6 +266,13 @@ async function loadData() {
   } finally {
     loading.value = false;
   }
+}
+
+// 切换"我的待办"模式
+function toggleMyTodo() {
+  myTodoMode.value = !myTodoMode.value;
+  pagination.current = 1;
+  loadData();
 }
 
 // 搜索
@@ -194,6 +290,7 @@ function handleReset() {
     released_by: '',
     dateRange: [],
   });
+  myTodoMode.value = false;
   pagination.current = 1;
   loadData();
 }
@@ -232,14 +329,18 @@ async function handleRetry(record: ReleaseRecord) {
   }
 }
 
-// AI 分析构建失败
+// AI 分析构建失败：智能截取错误日志 → 创建对话 → 跳转 AI 对话页预填输入框
 async function handleAIAnalyze(record: ReleaseRecord) {
   try {
     const res = await createAIAnalysis(record.id);
     const conversationId = res.conversation_id ?? res;
+    const content = res.content;
+    if (content) {
+      sessionStorage.setItem('ai_chat_prefill', content);
+    }
     router.push({
       path: '/ai/chat',
-      query: { conversation_id: conversationId, auto_send: '1' },
+      query: { conversation_id: conversationId, prefill: '1' },
     });
   } catch (error: any) {
     message.error(
@@ -248,9 +349,13 @@ async function handleAIAnalyze(record: ReleaseRecord) {
   }
 }
 
-// 打开审批弹窗
-function handleApprove(record: ReleaseRecord, type: 'approve' | 'reject') {
-  approvalModalRef.value?.open(record, type);
+// 打开审批详情抽屉（发布完毕后查看审批历史 / 查看节点详情）
+// presetAction 可选：由"通过/拒绝"按钮直接打开并预设操作类型
+function handleViewApprovalDetail(
+  record: ReleaseRecord,
+  presetAction?: 'approve' | 'reject',
+) {
+  approvalDetailDrawerRef.value?.open(record, presetAction);
 }
 
 // 审批成功
@@ -346,6 +451,14 @@ onMounted(() => {
         <Form.Item>
           <Button type="primary" @click="handleSearch">查询</Button>
           <Button style="margin-left: 8px" @click="handleReset">重置</Button>
+          <Button
+            :type="myTodoMode ? 'primary' : 'default'"
+            :danger="myTodoMode"
+            style="margin-left: 8px"
+            @click="toggleMyTodo"
+          >
+            {{ myTodoMode ? '退出我的待办' : '我的待办' }}
+          </Button>
         </Form.Item>
       </Form>
     </Card>
@@ -357,7 +470,7 @@ onMounted(() => {
         :data-source="tableData"
         :loading="loading"
         :pagination="pagination"
-        :scroll="{ x: 1500 }"
+        :scroll="{ x: 1660 }"
         row-key="id"
         @change="handleTableChange"
       >
@@ -374,11 +487,23 @@ onMounted(() => {
             </Button>
             <Button
               v-if="
-                canApprove(record) && hasPermission('release:release_record:approve')
+                record.require_approval ||
+                record.approval_user ||
+                record.approval_rule_name
               "
               type="link"
               size="small"
-              @click="handleApprove(record, 'approve')"
+              @click="handleViewApprovalDetail(record)"
+            >
+              审批详情
+            </Button>
+            <Button
+              v-if="
+                canApprove(record) && hasPermission('release:release_record:approve')
+              "
+              :type="myTodoMode ? 'primary' : 'link'"
+              size="small"
+              @click="handleViewApprovalDetail(record, 'approve')"
             >
               通过
             </Button>
@@ -386,10 +511,10 @@ onMounted(() => {
               v-if="
                 canApprove(record) && hasPermission('release:release_record:reject')
               "
-              type="link"
+              :type="myTodoMode ? 'primary' : 'link'"
               size="small"
               danger
-              @click="handleApprove(record, 'reject')"
+              @click="handleViewApprovalDetail(record, 'reject')"
             >
               拒绝
             </Button>
@@ -426,8 +551,8 @@ onMounted(() => {
     <!-- 构建日志弹窗 -->
     <BuildLogModal ref="buildLogModalRef" />
 
-    <!-- 审批弹窗 -->
-    <ApprovalModal ref="approvalModalRef" @success="handleApprovalSuccess" />
+    <!-- 审批详情抽屉（查看 + 审批操作统一入口） -->
+    <ApprovalDetailDrawer ref="approvalDetailDrawerRef" @success="handleApprovalSuccess" />
   </div>
 </template>
 

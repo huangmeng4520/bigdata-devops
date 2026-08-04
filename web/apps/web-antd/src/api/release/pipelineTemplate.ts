@@ -49,7 +49,7 @@ export namespace PipelineTemplateApi {
 
   export interface TemplateListParams {
     page?: number;
-    page_size?: number;
+    pageSize?: number;
     name?: string;
     code?: string;
     language?: string;
@@ -60,7 +60,7 @@ export namespace PipelineTemplateApi {
 
   export interface VersionListParams {
     page?: number;
-    page_size?: number;
+    pageSize?: number;
     template?: number;
     is_latest?: boolean;
     status?: number;

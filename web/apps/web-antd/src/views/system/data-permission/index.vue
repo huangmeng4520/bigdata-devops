@@ -42,6 +42,7 @@ interface ProjectItem {
 const projects = ref<ProjectItem[]>([]);
 const projectLoading = ref(false);
 const selectedProjectId = ref<null | number>(null);
+const projectKeyword = ref('');
 
 // 用户池（右侧研发）
 const allUsers = ref<{ id: number; nickname: string; username: string }[]>([]);
@@ -55,6 +56,16 @@ const saving = ref(false);
 const selectedProject = computed(() =>
   projects.value.find((p) => p.id === selectedProjectId.value),
 );
+
+const filteredProjects = computed(() => {
+  if (!projectKeyword.value) return projects.value;
+  const kw = projectKeyword.value.toLowerCase();
+  return projects.value.filter(
+    (p) =>
+      p.name.toLowerCase().includes(kw) ||
+      p.code.toLowerCase().includes(kw),
+  );
+});
 
 const filteredUsers = computed(() => {
   if (!keyword.value) return allUsers.value;
@@ -71,7 +82,7 @@ async function loadProjects() {
   try {
     const res = await getProjectList({
       page: 1,
-      page_size: 999,
+      pageSize: 999,
       status: 1,
     });
     // 兼容后端两种返回结构：{items} 或 {data}
@@ -85,7 +96,7 @@ async function loadProjects() {
 async function loadUsers() {
   userLoading.value = true;
   try {
-    const res = await getUserList({ page: 1, page_size: 999 });
+    const res = await getUserList({ page: 1, pageSize: 999 });
     allUsers.value = (res.items || []).map((u: any) => ({
       id: u.id,
       username: u.username,
@@ -156,30 +167,40 @@ onMounted(async () => {
             title="项目列表"
             :loading="projectLoading"
             class="h-full flex flex-col"
-            :body-style="{ flex: '1', overflow: 'auto', padding: '8px 0' }"
+            :body-style="{ flex: '1', overflow: 'hidden', padding: '0' }"
           >
-            <a-empty
-              v-if="projects.length === 0"
-              description="暂无项目"
-              class="mt-10"
-            />
-            <a-menu
-              v-else
-              mode="inline"
-              :selected-keys="
-                selectedProjectId !== null ? [String(selectedProjectId)] : []
-              "
-              class="border-0"
-            >
-              <a-menu-item
-                v-for="project in projects"
-                :key="String(project.id)"
-                @click="onSelectProject(project.id)"
+            <div class="border-b px-2 py-2">
+              <a-input-search
+                v-model:value="projectKeyword"
+                placeholder="搜索项目名称 / 编码"
+                allow-clear
+                size="small"
+              />
+            </div>
+            <div class="flex-1 overflow-auto">
+              <a-empty
+                v-if="filteredProjects.length === 0"
+                description="暂无项目"
+                class="mt-10"
+              />
+              <a-menu
+                v-else
+                mode="inline"
+                :selected-keys="
+                  selectedProjectId !== null ? [String(selectedProjectId)] : []
+                "
+                class="border-0"
               >
-                {{ project.name }}
-                <span class="ml-2 text-gray-400">{{ project.code }}</span>
-              </a-menu-item>
-            </a-menu>
+                <a-menu-item
+                  v-for="project in filteredProjects"
+                  :key="String(project.id)"
+                  @click="onSelectProject(project.id)"
+                >
+                  {{ project.name }}
+                  <span class="ml-2 text-gray-400">{{ project.code }}</span>
+                </a-menu-item>
+              </a-menu>
+            </div>
           </a-card>
         </a-col>
 

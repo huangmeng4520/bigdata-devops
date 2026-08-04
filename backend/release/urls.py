@@ -20,7 +20,6 @@ router.register(r'pipeline-templates', views.PipelineTemplateViewSet, basename='
 router.register(r'pipeline-template-versions', views.PipelineTemplateVersionViewSet, basename='release-pipeline-template-version')
 router.register(r'application-pipeline-configs', views.ApplicationPipelineConfigViewSet, basename='release-application-pipeline-config')
 router.register(r'application-pipeline-versions', views.ApplicationPipelineVersionViewSet, basename='release-application-pipeline-version')
-router.register(r'environment-strategies', views.EnvironmentStrategyViewSet, basename='release-environment-strategy')
 
 # 发布管理路由
 router.register(r'release-records', views.ReleaseRecordViewSet, basename='release-record')

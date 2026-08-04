@@ -179,7 +179,7 @@ const [Grid, gridApi] = useVbenVxeGrid({
         query: async ({ page }, formValues) => {
           const params = {
             page: page?.currentPage,
-            page_size: page?.pageSize,
+            pageSize: page?.pageSize,
             ...formValues,
           };
           const result = await getCodeRepositoryList(params);

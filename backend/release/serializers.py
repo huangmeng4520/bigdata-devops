@@ -7,8 +7,7 @@ from .models import (
     Project, Module, Application, CodeRepository, ConfigPackage, SyncLog,
     PipelineTemplate, PipelineTemplateVersion,
     ApplicationPipelineConfig, ApplicationPipelineVersion,
-    EnvironmentStrategy,
-    ReleaseRecord, ReleaseBuildLog, ApprovalRule
+    ReleaseRecord, ReleaseBuildLog, ApprovalRule, ApprovalRecord
 )
 
 
@@ -368,30 +367,6 @@ class ApplicationPipelineConfigCreateSerializer(serializers.ModelSerializer):
         validators = []
 
 
-class EnvironmentStrategySerializer(serializers.ModelSerializer):
-    """环境策略序列化器"""
-    status_display = serializers.CharField(source='get_status_display', read_only=True)
-
-    class Meta:
-        model = EnvironmentStrategy
-        fields = "__all__"
-        read_only_fields = ["creator", "modifier", "create_time", "update_time"]
-
-
-class EnvironmentStrategyCreateSerializer(serializers.ModelSerializer):
-    """环境策略创建序列化器"""
-    name = serializers.CharField(required=False, allow_blank=True, default='')
-    code = serializers.CharField(required=False, allow_blank=True, default='')
-    description = serializers.CharField(required=False, allow_blank=True, default='')
-
-    class Meta:
-        model = EnvironmentStrategy
-        fields = [
-            "name", "code", "environment",
-            "requires_approval", "auto_deploy", "description", "is_default", "status"
-        ]
-
-
 # ============================================================
 # 命名验证相关序列化器
 # ============================================================
@@ -423,6 +398,11 @@ class ReleaseRecordSerializer(serializers.ModelSerializer):
     module_name = serializers.CharField(source="application.module.name", read_only=True)
     environment_display = serializers.CharField(source='get_environment_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
+    approval_rule_name = serializers.CharField(source="approval_rule.name", read_only=True)
+    approval_rule_code = serializers.CharField(source="approval_rule.code", read_only=True, default=None)
+    rule_type_display = serializers.SerializerMethodField()
+    # 当前待审批人姓名列表：列表页无需额外请求 approval_progress 即可展示节点/审批人
+    current_approver_names = serializers.SerializerMethodField()
 
     class Meta:
         model = ReleaseRecord
@@ -432,6 +412,23 @@ class ReleaseRecordSerializer(serializers.ModelSerializer):
             "jenkins_build_number", "jenkins_build_url", "jenkins_build_status",
             "jenkins_build_duration", "docker_image", "artifact_url",
             "conversation_id",
+            "approval_rule", "approval_scope", "approved_count",
+            "required_count", "current_approver_ids", "approval_deadline",
+        ]
+
+    def get_rule_type_display(self, obj):
+        if obj.approval_rule:
+            return obj.approval_rule.get_rule_type_display()
+        return None
+
+    def get_current_approver_names(self, obj):
+        """由 approvers 配置 [{"user_id","username","order"}] 解析当前待审批人姓名"""
+        approver_cfg_map = {
+            a.get('user_id'): a for a in (obj.approvers or [])
+        }
+        return [
+            approver_cfg_map.get(uid, {}).get('username', f'用户{uid}')
+            for uid in (obj.current_approver_ids or [])
         ]
 
 
@@ -471,6 +468,10 @@ class ApprovalRuleSerializer(serializers.ModelSerializer):
     """审批规则序列化器"""
     rule_type_display = serializers.CharField(source='get_rule_type_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
+    timeout_action_display = serializers.CharField(source='get_timeout_action_display', read_only=True)
+    project_name = serializers.CharField(source="project.name", read_only=True, default=None)
+    application_name = serializers.CharField(source="application.name", read_only=True, default=None)
+    scope = serializers.CharField(read_only=True)
 
     class Meta:
         model = ApprovalRule
@@ -482,10 +483,25 @@ class ApprovalRuleCreateSerializer(serializers.ModelSerializer):
     """审批规则创建序列化器"""
     class Meta:
         model = ApprovalRule
-        fields = ["name", "code", "environment", "rule_type", "approvers", "min_approvers", "status"]
+        fields = [
+            "name", "code", "project", "application", "environment",
+            "rule_type", "approvers", "min_approvers",
+            "timeout_hours", "timeout_action", "notify_channels",
+            "status",
+        ]
 
 
 class ApprovalActionSerializer(serializers.Serializer):
     """审批操作序列化器"""
-    approved = serializers.BooleanField(help_text="是否批准")
+    approved = serializers.BooleanField(required=False, help_text="是否批准")
     comment = serializers.CharField(max_length=512, required=False, allow_blank=True, default='', help_text="审批意见")
+
+
+class ApprovalRecordSerializer(serializers.ModelSerializer):
+    """审批操作记录序列化器"""
+    action_display = serializers.CharField(source='get_action_display', read_only=True)
+
+    class Meta:
+        model = ApprovalRecord
+        fields = "__all__"
+        read_only_fields = ["creator", "modifier", "create_time", "update_time", "acted_at"]

@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "data-bureau-web",
+    "code": "data-bureau-web",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "repo_name_match test id=340",
+    "git_url": "http://220.163.62.194:12001/data-bureau-web.git"
+  },
+  "version": {
+    "version": "1.0.0",
+    "content": "// Pipeline: http://220.163.62.194:12001/data-bureau-web.git",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

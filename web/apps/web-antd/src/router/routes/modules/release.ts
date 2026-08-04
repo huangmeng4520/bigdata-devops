@@ -59,14 +59,15 @@ const routes: RouteRecordRaw[] = [
         },
         component: () => import('#/views/release/codeRepository/index.vue'),
       },
+      // 审批规则
       {
-        path: '/release/environment-strategy',
-        name: 'ReleaseEnvironmentStrategy',
+        path: '/release/approval-rule',
+        name: 'ReleaseApprovalRule',
         meta: {
-          icon: 'mdi:cog-outline',
-          title: '环境策略',
+          icon: 'mdi:clipboard-check-outline',
+          title: '审批规则',
         },
-        component: () => import('#/views/release/environmentStrategy/index.vue'),
+        component: () => import('#/views/release/approvalRule/index.vue'),
       },
       // 发布记录
       {

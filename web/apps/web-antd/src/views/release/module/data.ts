@@ -29,7 +29,7 @@ export function useSchema(): VbenFormSchema[] {
       label: '所属项目',
       rules: z.number({ required_error: '请选择所属项目' }),
       componentProps: {
-        api: () => getProjectList({ page: 1, page_size: 1000, status: 1 }),
+        api: () => getProjectList({ page: 1, pageSize: 999, status: 1 }),
         resultField: 'items',
         labelField: 'name',
         valueField: 'id',
@@ -37,6 +37,7 @@ export function useSchema(): VbenFormSchema[] {
         showSearch: true,
         filterOption: (input: string, option: { label: string }) =>
           option.label.toLowerCase().includes(input.toLowerCase()),
+        style: { width: '100%' },
       },
     },
     {
@@ -241,7 +242,7 @@ export function useColumns(
       headerAlign: 'center',
       showOverflow: false,
       title: '操作',
-      width: 200,
+      width: 260,
     },
   ];
 }

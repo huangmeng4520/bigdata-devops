@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "unified-identity-authentication-public",
+    "code": "unified-identity-authentication-public",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "exact_match test id=400",
+    "git_url": "http://220.163.62.194:12001/front/csp/unified-identity-authentication-public.git"
+  },
+  "version": {
+    "version": "1.0.0",
+    "content": "// Pipeline: http://220.163.62.194:12001/front/csp/unified-identity-authentication-public.git",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

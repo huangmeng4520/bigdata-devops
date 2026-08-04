@@ -10,7 +10,6 @@ __all__ = [
     'PipelineTemplateVersionViewSet',
     'ApplicationPipelineConfigViewSet',
     'ApplicationPipelineVersionViewSet',
-    'EnvironmentStrategyViewSet',
     # 发布管理
     'ReleaseRecordViewSet',
     'ApprovalRuleViewSet',
@@ -33,7 +32,6 @@ from .config_package import ConfigPackageViewSet
 from .sync_log import SyncLogViewSet
 from .pipeline_template import PipelineTemplateViewSet, PipelineTemplateVersionViewSet
 from .application_pipeline import ApplicationPipelineConfigViewSet, ApplicationPipelineVersionViewSet
-from .environment_strategy import EnvironmentStrategyViewSet
 # 发布管理
 from .release import (
     ReleaseRecordViewSet, ApprovalRuleViewSet,

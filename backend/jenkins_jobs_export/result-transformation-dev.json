@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "result-transformation-dev",
+    "code": "result-transformation-dev",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "科技成果转化平台后端-dev",
+    "git_url": "ssh://git@220.163.62.194:12002/dengbin/result-transformation.git"
+  },
+  "version": {
+    "version": "1.0.3",
+    "content": "pipeline {\n    agent any\n\n    environment {\n        GROUP_NAME = 'com.dsj'\n        PROJECT_NAME = 'result-transformation'\n        VERSION = '1.0.0'\n        REMOTE_HOST = '20.48.1.67'\n        REMOTE_USER = 'root'\n        REMOTE_CREDENTIALS_ID = 'jenkins-server-ssh-private-key'\n        TIMESTAMP = new Date().format(\"yyyyMMddHHmmss\", TimeZone.getTimeZone('Asia/Shanghai'))\n        IMAGE_TAG = \"${GROUP_NAME}/${PROJECT_NAME}:${VERSION}\"\n        REGISTRY_TAG = \"${DOCKER_REGISTRY}/${PROJECT_NAME}:${VERSION}-${TIMESTAMP}\"\n    }\n\n    stages {\n        stage('Git Checkout') {\n            steps {\n                echo \"Checking out code from branch: ${params.Branch}\"\n                checkout scmGit(\n                    branches: [[name: \"${params.Branch}\"]],\n                    extensions: [[$class: 'CleanBeforeCheckout']],\n                    userRemoteConfigs: [[\n                        credentialsId: 'SSH-KEY-FOR-GITLAB',\n                        url: \"${GIALAB_ADDRESS}/dengbin/result-transformation.git\"\n                    ]]\n                )\n            }\n        }\n\n        stage('Mvn Build') {\n            // tools {\n            //     jdk 'jdk1.8'\n            // }\n            steps {\n                sh 'mvn -T 4 clean package -Dmaven.test.skip=true -Pdev'\n            }\n        }\n\n        stage('Build Image') {\n            steps {\n                sh \"docker rmi ${IMAGE_TAG} || true\"\n                sh \"docker build -t ${IMAGE_TAG} -f devops/Dockerfile .\"\n            }\n        }\n\n        stage('Push Image') {\n            steps {\n                sh \"docker login --username=${DOCKER_REGISTRY_USERNAME} --password=${DOCKER_REGISTRY_PASSWORD} ${DOCKER_REGISTRY}\"\n                sh \"docker tag ${IMAGE_TAG} ${REGISTRY_TAG}\"\n                sh \"docker push ${REGISTRY_TAG}\"\n            }\n        }\n\n        stage('Deploy') {\n            when {\n                expression { return params.DEPLOY }\n            }\n            steps {\n                sshagent([REMOTE_CREDENTIALS_ID]) {\n                    sh \"\"\"\n                        ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} '\n                            set -e\n                            echo \"Deploying ${REGISTRY_TAG}\"\n                            docker login --username=${DOCKER_REGISTRY_USERNAME} --password=${DOCKER_REGISTRY_PASSWORD} ${DOCKER_REGISTRY}\n                            docker pull ${REGISTRY_TAG}\n                            docker rm -f ${PROJECT_NAME} || true\n                            docker run -d \\\n                                --name ${PROJECT_NAME} \\\n                                --restart=on-failure:5 \\\n                                -e TZ=Asia/Shanghai \\\n                                -p 30000:30000 \\\n                                ${REGISTRY_TAG}\n                            echo \"Deployment completed\"\n                        '\n                    \"\"\"\n                }\n            }\n        }\n    }\n}",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "Data_Platform_Web_Gov",
+    "code": "Data_Platform_Web_Gov",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "repo_name_match test id=342",
+    "git_url": "http://220.163.62.194:12001/data-platform-web-gov.git"
+  },
+  "version": {
+    "version": "1.0.0",
+    "content": "// Pipeline: http://220.163.62.194:12001/data-platform-web-gov.git",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

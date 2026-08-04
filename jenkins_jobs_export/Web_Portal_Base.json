@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "Web_Portal_Base",
+    "code": "Web_Portal_Base",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "repo_name_match test id=346",
+    "git_url": "http://220.163.62.194:12001/web-portal-base.git"
+  },
+  "version": {
+    "version": "1.0.0",
+    "content": "// Pipeline: http://220.163.62.194:12001/web-portal-base.git",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

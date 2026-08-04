@@ -3,6 +3,7 @@
 代码仓库管理视图
 """
 import logging
+from django.db import IntegrityError
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
@@ -13,7 +14,7 @@ from ..models import CodeRepository
 from ..serializers import CodeRepositorySerializer, CodeRepositoryCreateSerializer
 from ..filters import CodeRepositoryFilter
 from ..services import GitLabService, DevOpsException
-from ..tasks import sync_code_repository_gitlab
+from ..tasks import sync_code_repository_gitlab, import_gitlab_projects_batch
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,7 @@ class CodeRepositoryViewSet(DataPermissionMixin, CustomModelViewSet):
     def list_gitlab_projects(self, request):
         """
         列出 GitLab 上的 Projects（用于导入）
+        返回所有项目 + 已导入ID集合，由前端负责显示/过滤
         """
         group_id = request.query_params.get("group_id")
         search = request.query_params.get("search", "")
@@ -152,27 +154,25 @@ class CodeRepositoryViewSet(DataPermissionMixin, CustomModelViewSet):
         try:
             gitlab = GitLabService()
             if group_id:
-                projects = gitlab.list_projects(int(group_id), page, per_page)
+                projects, total = gitlab.list_projects(int(group_id), page=page, per_page=per_page, with_total=True)
             elif search:
-                projects = gitlab.search_projects(search, page, per_page)
+                projects, total = gitlab.search_projects(search, page=page, per_page=per_page, with_total=True)
             else:
-                projects = gitlab.list_projects(page=page, per_page=per_page)
+                projects, total = gitlab.list_projects(page=page, per_page=per_page, with_total=True)
             
             # 获取已导入的 GitLab Project IDs
             imported_ids = set(CodeRepository.objects.filter(
                 is_deleted=False
             ).values_list('gitlab_project_id', flat=True))
             
-            # 过滤已存在的
-            filtered_projects = [
-                p for p in projects 
-                if p.get('id') not in imported_ids and p.get('id') is not None
-            ]
-            
+            # 返回所有项目（不过滤），让前端根据 imported_ids 区分已导入和未导入
             return Response({
                 "code": 0,
-                "data": filtered_projects,
-                "total": len(filtered_projects)
+                "data": {
+                    "projects": projects,        # 当前页所有项目
+                    "total": total,               # GitLab 原始总数
+                    "imported_ids": list(imported_ids),  # 已导入的 ID 集合
+                },
             })
         except DevOpsException as e:
             return Response({"code": 1, "message": e.message})
@@ -180,146 +180,62 @@ class CodeRepositoryViewSet(DataPermissionMixin, CustomModelViewSet):
     @action(detail=False, methods=["post"])
     def import_gitlab_projects(self, request):
         """
-        批量从 GitLab 导入 Projects 到本系统
+        批量从 GitLab 导入 Projects 到本系统（异步任务）
+        改为提交 Celery 异步任务，避免前端超时
         """
         import_data = request.data.get("data", [])
         
         if not import_data:
             return Response({"code": 1, "message": "请选择要导入的 Projects"})
 
-        # 获取已导入的 IDs
+        # 过滤掉没有 gitlab_project_id 的项，提取纯数据
+        valid_items = []
+        invalid_count = 0
+        for item in import_data:
+            gitlab_project_id = item.get("gitlab_project_id")
+            if not gitlab_project_id:
+                invalid_count += 1
+                continue
+            valid_items.append({
+                "gitlab_project_id": int(gitlab_project_id),
+                "project_id": item.get("project_id"),
+                "module_id": item.get("module_id"),
+            })
+
+        if not valid_items:
+            return Response({"code": 1, "message": "没有有效的 Project 可导入"})
+
+        # 过滤已导入的（未删除）
         imported_ids = set(CodeRepository.objects.filter(
             is_deleted=False
         ).values_list('gitlab_project_id', flat=True))
+        
+        items_to_import = [it for it in valid_items if it["gitlab_project_id"] not in imported_ids]
+        skipped_count = len(valid_items) - len(items_to_import)
 
-        success_count = 0
-        fail_count = 0
-        results = []
-
-        try:
-            gitlab = GitLabService()
-
-            for item in import_data:
-                gitlab_project_id = item.get("gitlab_project_id")
-                project_id = item.get("project_id")
-                module_id = item.get("module_id")
-
-                if not gitlab_project_id:
-                    fail_count += 1
-                    results.append({
-                        "gitlab_project_id": gitlab_project_id,
-                        "status": "failed",
-                        "message": "参数不完整"
-                    })
-                    continue
-
-                # 已存在（未删除）则跳过
-                if gitlab_project_id in imported_ids:
-                    fail_count += 1
-                    results.append({
-                        "gitlab_project_id": gitlab_project_id,
-                        "status": "skipped",
-                        "message": "已存在"
-                    })
-                    continue
-
-                try:
-                    from ..models import Project, Module
-
-                    project_info = gitlab.get_project(gitlab_project_id)
-                    if not project_info:
-                        fail_count += 1
-                        results.append({
-                            "gitlab_project_id": gitlab_project_id,
-                            "status": "failed",
-                            "message": "GitLab Project 不存在"
-                        })
-                        continue
-
-                    # 自动匹配项目和模块
-                    project_obj = None
-                    module_obj = None
-                    namespace = project_info.get("namespace", {})
-                    full_path = namespace.get("full_path", "")
-
-                    if full_path:
-                        path_parts = full_path.split("/")
-                        if len(path_parts) >= 1:
-                            project_path = path_parts[0]
-                            try:
-                                project_obj = Project.objects.get(code=project_path, is_deleted=False)
-                            except Project.DoesNotExist:
-                                pass
-
-                            if len(path_parts) >= 2:
-                                module_path = path_parts[1]
-                                if project_obj:
-                                    try:
-                                        module_obj = Module.objects.get(project=project_obj, code=module_path, is_deleted=False)
-                                    except Module.DoesNotExist:
-                                        pass
-
-                    # 若曾被软删除，则恢复（取消删除并更新字段），而非新建重复记录
-                    deleted_repo = CodeRepository.objects.filter(
-                        gitlab_project_id=gitlab_project_id, is_deleted=True
-                    ).first()
-                    if deleted_repo:
-                        deleted_repo.is_deleted = False
-                        deleted_repo.name = project_info.get("name", deleted_repo.name)
-                        deleted_repo.code = project_info.get("path", deleted_repo.code)
-                        deleted_repo.git_url = project_info.get("ssh_url_to_repo", deleted_repo.git_url)
-                        deleted_repo.git_http_url = project_info.get("http_url_to_repo", deleted_repo.git_http_url)
-                        deleted_repo.project = project_obj
-                        deleted_repo.module = module_obj
-                        deleted_repo.repository_type = 'gitlab'
-                        deleted_repo.save()
-                        success_count += 1
-                        results.append({
-                            "gitlab_project_id": gitlab_project_id,
-                            "status": "restored",
-                            "id": deleted_repo.id,
-                            "name": deleted_repo.name
-                        })
-                        continue
-
-                    repo = CodeRepository.objects.create(
-                        name=project_info.get("name", ""),
-                        code=project_info.get("path", ""),
-                        gitlab_project_id=project_info["id"],
-                        git_url=project_info.get("ssh_url_to_repo", ""),
-                        git_http_url=project_info.get("http_url_to_repo", ""),
-                        project=project_obj,
-                        module=module_obj,
-                        repository_type='gitlab',
-                        creator=request.user.username
-                    )
-                    success_count += 1
-                    results.append({
-                        "gitlab_project_id": gitlab_project_id,
-                        "status": "success",
-                        "id": repo.id,
-                        "name": repo.name
-                    })
-                except Exception as e:
-                    fail_count += 1
-                    results.append({
-                        "gitlab_project_id": gitlab_project_id,
-                        "status": "failed",
-                        "message": str(e)
-                    })
-
+        if not items_to_import:
             return Response({
                 "code": 0,
-                "message": f"导入完成: 成功 {success_count} 个, 跳过/失败 {fail_count} 个",
-                "data": {
-                    "success_count": success_count,
-                    "fail_count": fail_count,
-                    "results": results
-                }
+                "message": f"全部 {len(valid_items)} 个项目已导入，无需重复导入",
+                "data": {"success_count": 0, "fail_count": 0, "skipped_count": skipped_count, "results": []}
             })
-        except Exception as e:
-            logger.error(f"批量导入 GitLab Projects 失败: {str(e)}")
-            return Response({"code": 1, "message": f"导入失败: {str(e)}"})
+
+        # 提交 Celery 异步任务
+        task = import_gitlab_projects_batch.delay(
+            items=items_to_import,
+            username=request.user.username
+        )
+
+        return Response({
+            "code": 0,
+            "message": f"批量导入任务已提交（{len(items_to_import)} 个项目），正在后台处理。已跳过 {skipped_count} 个已导入项目" + (f"，{invalid_count} 个参数无效" if invalid_count else ""),
+            "data": {
+                "task_id": task.id,
+                "total": len(items_to_import),
+                "skipped_count": skipped_count,
+                "invalid_count": invalid_count,
+            }
+        })
 
     @action(detail=False, methods=["post"])
     def import_gitlab_project(self, request):
@@ -335,12 +251,12 @@ class CodeRepositoryViewSet(DataPermissionMixin, CustomModelViewSet):
 
         try:
             gitlab = GitLabService()
-            project_info = gitlab.get_project(gitlab_project_id)
+            project_info = gitlab.get_project(gitlab_project_id, raise_on_error=True)
             
             if not project_info:
                 return Response({"code": 1, "message": "GitLab Project 不存在"})
 
-            # 先解析项目/模块，供恢复与新建复用
+            # 先解析项目/模块：优先显式参数，否则按 GitLab namespace 路径自动匹配
             from ..models import Project, Module
 
             project_obj = None
@@ -358,11 +274,29 @@ class CodeRepositoryViewSet(DataPermissionMixin, CustomModelViewSet):
                 except Module.DoesNotExist:
                     return Response({"code": 1, "message": "模块不存在"})
 
+            # 未显式指定时，按 GitLab namespace 路径自动匹配项目/模块
+            if project_obj is None:
+                namespace = project_info.get("namespace", {}) or {}
+                full_path = namespace.get("full_path", "")
+                if full_path:
+                    path_parts = full_path.split("/")
+                    try:
+                        project_obj = Project.objects.get(code=path_parts[0], is_deleted=False)
+                    except Project.DoesNotExist:
+                        project_obj = None
+                    if project_obj and len(path_parts) >= 2:
+                        try:
+                            module_obj = Module.objects.get(
+                                project=project_obj, code=path_parts[1], is_deleted=False
+                            )
+                        except Module.DoesNotExist:
+                            module_obj = None
+
             # 已存在且未删除
             if CodeRepository.objects.filter(gitlab_project_id=gitlab_project_id, is_deleted=False).exists():
                 return Response({"code": 1, "message": "该 GitLab Project 已导入"})
 
-            # 若曾被软删除，恢复之（取消删除并更新字段）
+            # 若曾被软删除，恢复之（取消删除并校正项目/模块关联）
             deleted_repo = CodeRepository.objects.filter(
                 gitlab_project_id=gitlab_project_id, is_deleted=True
             ).first()
@@ -375,14 +309,22 @@ class CodeRepositoryViewSet(DataPermissionMixin, CustomModelViewSet):
                 deleted_repo.project = project_obj
                 deleted_repo.module = module_obj
                 deleted_repo.repository_type = 'gitlab'
-                deleted_repo.save()
+                try:
+                    deleted_repo.save()
+                except IntegrityError:
+                    return Response({
+                        "code": 1,
+                        "message": f"恢复失败：项目下已存在同名代码仓库（{deleted_repo.code}），请先清理重复数据"
+                    })
                 return Response({
                     "code": 0,
                     "message": "恢复成功",
                     "data": {
                         "id": deleted_repo.id,
                         "name": deleted_repo.name,
-                        "gitlab_project_id": deleted_repo.gitlab_project_id
+                        "gitlab_project_id": deleted_repo.gitlab_project_id,
+                        "project_id": deleted_repo.project_id,
+                        "module_id": deleted_repo.module_id,
                     }
                 })
 

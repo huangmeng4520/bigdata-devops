@@ -60,7 +60,7 @@ export namespace ReleaseApplicationApi {
 
   export interface ApplicationListParams {
     page?: number;
-    page_size?: number;
+    pageSize?: number;
     name?: string;
     code?: string;
     project?: number;

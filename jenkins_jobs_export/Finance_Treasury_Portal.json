@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "Finance_Treasury_Portal",
+    "code": "Finance_Treasury_Portal",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "exact_match test id=375",
+    "git_url": "http://220.163.62.194:12001/front/finance-treasury-portal.git"
+  },
+  "version": {
+    "version": "1.0.0",
+    "content": "// Pipeline: http://220.163.62.194:12001/front/finance-treasury-portal.git",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

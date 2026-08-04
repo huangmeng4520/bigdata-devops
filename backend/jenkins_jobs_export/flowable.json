@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "flowable",
+    "code": "flowable",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "用户服务",
+    "git_url": "ssh://git@220.163.62.194:12002/common/flowable-dsj.git"
+  },
+  "version": {
+    "version": "1.0.3",
+    "content": "pipeline {\n    agent any\n\n    environment {\n        REMOTE_HOST = '10.0.0.22' // 远程服务器地址\n        REMOTE_USER = 'root' // 远程服务器用户名\n        REMOTE_CREDENTIALS_ID = 'jenkins-server-ssh-private-key' // Jenkins中保存的远程服务器SSH凭证ID\n        TIMESTAMP = new Date().format(\"yyyyMMddHHmmss\", TimeZone.getTimeZone('Asia/Shanghai'))\n    }\n\n    stages {\n        stage('Git') {\n            steps {\n                echo \"Trying to checkout code from gitlab branch: ${params.Branch}\"\n                checkout scmGit(branches: [[name: \"${params.Branch}\"]], extensions: [], userRemoteConfigs: [[credentialsId: 'SSH-KEY-FOR-GITLAB', url: 'ssh://git@106.227.89.18:10093/common/flowable-dsj.git']])\n            }\n        }\n        \n        stage('Mvn Compile') {\n            steps {\n                script {\n                    sh \"mvn clean deploy -Dmaven.test.skip=true -P snapshot-repo\"\n                }\n            }\n        }\n    }\n}",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}

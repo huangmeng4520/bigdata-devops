@@ -1,0 +1,18 @@
+{
+  "template": {
+    "name": "yzt-jenkins-notification",
+    "code": "yzt-jenkins-notification",
+    "language": "java",
+    "language_version": "17",
+    "framework": "springboot",
+    "description": "exact_match test id=376",
+    "git_url": "http://220.163.62.194:12001/common/yzt-jenkins-notification.git"
+  },
+  "version": {
+    "version": "1.0.0",
+    "content": "// Pipeline: http://220.163.62.194:12001/common/yzt-jenkins-notification.git",
+    "variables": {},
+    "stages": [],
+    "stages_content": {}
+  }
+}
