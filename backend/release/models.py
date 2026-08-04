@@ -509,31 +509,6 @@ class ApplicationPipelineVersion(CoreModel):
         return f"{self.config.application.name} - v{self.version}"
 
 
-class EnvironmentStrategy(CoreModel):
-    """环境策略"""
-    name = models.CharField(max_length=64, verbose_name="策略名称")
-    code = models.CharField(max_length=32, unique=True, verbose_name="策略编码")
-    environment = models.CharField(max_length=32, verbose_name="环境")
-    requires_approval = models.BooleanField(default=False, verbose_name="需要审批")
-    auto_deploy = models.BooleanField(default=False, verbose_name="自动部署")
-    description = models.TextField(blank=True, null=True, verbose_name="描述")
-    is_default = models.BooleanField(default=False, verbose_name="默认策略")
-    status = models.IntegerField(
-        choices=CommonStatus.choices,
-        default=CommonStatus.ENABLED,
-        verbose_name="状态"
-    )
-
-    class Meta:
-        db_table = "release_environment_strategy"
-        verbose_name = "环境策略"
-        verbose_name_plural = verbose_name
-        ordering = ["-create_time"]
-
-    def __str__(self):
-        return self.name
-
-
 # ============================================================
 # 发布管理相关模型
 # ============================================================

@@ -2,7 +2,6 @@ export * from './project';
 export * from './module';
 export * from './application';
 export * from './pipelineTemplate';
-export * from './environmentStrategy';
 export * from './deployment';
 export * from './approvalRule';
 export * from './approval';

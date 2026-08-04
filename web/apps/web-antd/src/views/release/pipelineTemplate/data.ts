@@ -165,7 +165,10 @@ export function useSchema(isEdit: boolean = false): VbenFormSchema[] {
       fieldName: 'language',
       label: '编程语言',
       rules: z.string({ required_error: '请选择编程语言' }),
-      componentProps: { options: LANGUAGE_OPTIONS },
+      componentProps: {
+        options: LANGUAGE_OPTIONS,
+        style: { width: '100%' },
+      },
     },
     {
       component: 'Input',

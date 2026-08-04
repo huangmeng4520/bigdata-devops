@@ -12,7 +12,7 @@ from django.shortcuts import get_object_or_404
 
 from ..models import (
     ReleaseRecord, ReleaseBuildLog, ApprovalRule, ApprovalRecord, Application,
-    ApplicationPipelineConfig, EnvironmentStrategy
+    ApplicationPipelineConfig
 )
 from ..serializers import (
     ReleaseRecordSerializer, ReleaseCreateSerializer,
@@ -587,32 +587,24 @@ def trigger_release(request, app_id):
     branch = data['branch']
     environment = data['environment']
 
-    # 获取环境策略：决定是否需要审批
-    strategy = EnvironmentStrategy.objects.filter(
-        environment=environment,
-        status=1  # 启用状态
-    ).first()
-    require_approval = bool(strategy and strategy.requires_approval)
-
-    # 创建发布记录
+    # 创建发布记录（是否需要审批由审批规则引擎决定）
     release = ReleaseRecord.objects.create(
         application=application,
         branch=branch,
         environment=environment,
         version=data.get('version') or None,
-        require_approval=require_approval,
+        require_approval=False,
         status='pending',
         released_by=request.user.username,
         remark=data.get('remark', '')
     )
 
-    # 先尝试匹配审批规则（无论环境策略是否要求审批，配了规则就应走审批）
+    # 匹配审批规则：配了规则就应走审批，未匹配则免审直发
     engine = ApprovalEngine.init_for_release(release)
     if engine:
         # 匹配到规则，进入待审批
-        if not release.require_approval:
-            release.require_approval = True
-            release.save(update_fields=['require_approval'])
+        release.require_approval = True
+        release.save(update_fields=['require_approval'])
         notify_approval_pending(release)
         return Response({
             "code": 0,
@@ -628,11 +620,6 @@ def trigger_release(request, app_id):
                 "message": "发布已创建，等待审批"
             }
         })
-    # 未匹配到规则
-    if require_approval:
-        # 环境策略要求审批但无匹配规则 → 降级为免审直发
-        release.require_approval = False
-        release.save(update_fields=['require_approval'])
 
     # 免审 → 直接触发构建
     from ..services import JenkinsService, DevOpsException
@@ -769,23 +756,16 @@ def get_app_environments(request, app_id):
         is_active=True
     ).values('environment', 'jenkins_job_name')
 
-    strategies = {
-        s.environment: s
-        for s in EnvironmentStrategy.objects.filter(status=1)
-    }
-
     environments = []
     env_choices = dict(ApplicationPipelineConfig.ENVIRONMENT_CHOICES)
 
     for env_code, env_name in env_choices.items():
         config = next((c for c in configs if c['environment'] == env_code), None)
-        strategy = strategies.get(env_code)
 
         environments.append({
             "code": env_code,
             "name": env_name,
             "has_pipeline_config": config is not None,
-            "requires_approval": strategy.requires_approval if strategy else False,
         })
 
     return Response({"code": 0, "data": environments})

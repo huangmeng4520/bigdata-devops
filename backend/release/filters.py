@@ -7,7 +7,6 @@ from .models import (
     Project, Module, Application, CodeRepository, ConfigPackage, SyncLog,
     PipelineTemplate, PipelineTemplateVersion,
     ApplicationPipelineConfig, ApplicationPipelineVersion,
-    EnvironmentStrategy,
     ReleaseRecord, ReleaseBuildLog, ApprovalRule
 )
 
@@ -140,19 +139,6 @@ class ApplicationPipelineVersionFilter(django_filters.FilterSet):
     class Meta:
         model = ApplicationPipelineVersion
         fields = ['config', 'version', 'generated_by']
-
-
-class EnvironmentStrategyFilter(django_filters.FilterSet):
-    """环境策略过滤器"""
-    name = django_filters.CharFilter(lookup_expr='icontains')
-    code = django_filters.CharFilter(lookup_expr='icontains')
-    environment = django_filters.CharFilter()
-    is_default = django_filters.BooleanFilter()
-    status = django_filters.NumberFilter()
-
-    class Meta:
-        model = EnvironmentStrategy
-        fields = ['name', 'code', 'environment', 'is_default', 'status']
 
 
 # ============================================================

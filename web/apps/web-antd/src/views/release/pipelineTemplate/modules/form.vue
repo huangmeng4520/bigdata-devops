@@ -168,12 +168,15 @@ const [Modal, modalApi] = useVbenModal({
   },
   async onOpenChange(isOpen) {
     if (isOpen) {
+      // 切换前先彻底清理表单状态（值、校验、dirty），
+      // 避免编辑/创建来回切换时上一轮的字段值与校验状态残留
+      formApi.resetForm();
       const data = modalApi.getData<PipelineTemplateApi.Template>();
       if (data?.id) {
         // 编辑模式
         formData.value = data;
         await loadData(data.id);
-        
+
         formApi.setSchema(useSchema(true));
         formApi.updateSchema([
           { fieldName: 'code', componentProps: { disabled: true } },
@@ -181,12 +184,12 @@ const [Modal, modalApi] = useVbenModal({
       } else {
         // 创建模式
         formData.value = undefined;
-        
+
         formApi.setSchema(useSchema(false));
         formApi.updateSchema([
           { fieldName: 'code', componentProps: { disabled: false } },
         ]);
-        
+
         formApi.setValues({
           name: '',
           code: '',

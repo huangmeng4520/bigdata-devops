@@ -32,6 +32,7 @@ export function useSchema(): VbenFormSchema[] {
         showSearch: true,
         filterOption: (input: string, option: { label: string }) =>
           option.label.toLowerCase().includes(input.toLowerCase()),
+        style: { width: '100%' },
       },
     },
     {
@@ -49,6 +50,7 @@ export function useSchema(): VbenFormSchema[] {
         allowClear: true,
         filterOption: (input: string, option: { label: string }) =>
           option.label.toLowerCase().includes(input.toLowerCase()),
+        style: { width: '100%' },
       },
       dependencies: {
         triggerFields: ['project'],
@@ -107,6 +109,7 @@ export function useSchema(): VbenFormSchema[] {
         showSearch: true,
         filterOption: (input: string, option: { label: string }) =>
           option.label.toLowerCase().includes(input.toLowerCase()),
+        style: { width: '100%' },
       },
     },
     {
@@ -136,6 +139,7 @@ export function useSchema(): VbenFormSchema[] {
       componentProps: {
         options: APP_TYPE_OPTIONS,
         placeholder: '请选择应用类型',
+        style: { width: '100%' },
       },
     },
     {

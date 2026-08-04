@@ -55,7 +55,7 @@ class Command(BaseCommand):
                 'auth_code': 'release:approval_rule:view',
                 'pid': release_catalog,
                 'meta': meta,
-                'sort': 7,  # 在环境策略(6)之后、发布记录之前
+                'sort': 7,  # 在流水线模板之后、发布记录之前
             }
         )
 

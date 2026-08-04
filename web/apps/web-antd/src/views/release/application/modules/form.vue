@@ -17,6 +17,8 @@ import { breakpointsTailwind, useBreakpoints } from '@vueuse/core';
 
 const emit = defineEmits(['success']);
 const formData = ref<ReleaseApplicationApi.Application>();
+// 编辑模式下 project/module/code_repository 均 disabled，无需联动清空
+const isEditMode = computed(() => !!formData.value?.id);
 
 const getTitle = computed(() => {
   return formData.value?.id
@@ -32,6 +34,8 @@ const [Form, formApi] = useVbenForm({
   schema: useSchema(),
   showDefaultActions: false,
   handleValuesChange(_values, fieldsChanged) {
+    // 编辑模式下相关字段 disabled，跳过联动清空，避免回填值被误清空
+    if (isEditMode.value) return;
     const changing = new Set(fieldsChanged);
     // project 变化 → 清空 module 与 code_repository，触发重新拉取
     if (changing.has('project')) {
@@ -47,10 +51,8 @@ const [Form, formApi] = useVbenForm({
   },
 });
 
-function resetForm() {
-  const data = formData.value;
-  if (!data) return;
-  formApi.resetForm();
+// 将行数据回填到表单
+function fillForm(data: ReleaseApplicationApi.Application) {
   const toId = (val: any) =>
     typeof val === 'object' && val !== null ? (val as { id: number }).id : val;
   formApi.setValues({
@@ -59,6 +61,13 @@ function resetForm() {
     module: toId(data.module),
     code_repository: toId(data.code_repository),
   });
+}
+
+function resetForm() {
+  const data = formData.value;
+  if (!data) return;
+  formApi.resetForm();
+  fillForm(data);
 }
 
 const [Modal, modalApi] = useVbenModal({
@@ -83,14 +92,7 @@ const [Modal, modalApi] = useVbenModal({
       const data = modalApi.getData<ReleaseApplicationApi.Application>();
       if (data) {
         formData.value = data;
-        const toId = (val: any) =>
-          typeof val === 'object' && val !== null ? (val as { id: number }).id : val;
-        formApi.setValues({
-          ...data,
-          project: toId(data.project),
-          module: toId(data.module),
-          code_repository: toId(data.code_repository),
-        });
+        fillForm(data);
         if (data.id) {
           formApi.updateSchema([
             { fieldName: 'project', componentProps: { disabled: true } },

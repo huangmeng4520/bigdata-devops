@@ -68,20 +68,12 @@ const selectedEnv = computed(() => {
   return environments.value.find((e) => e.code === formData.value.environment);
 });
 
-// 监听环境变化，自动判断是否需要审批并加载生效规则
+// 监听环境变化，加载该应用+环境的生效审批规则（是否需要审批由后端规则引擎决定）
 watch(
   () => formData.value.environment,
   (env) => {
     if (env) {
-      const envInfo = environments.value.find((e) => e.code === env);
-      if (envInfo?.requires_approval) {
-        formData.value.require_approval = true;
-        // 调用生效规则接口匹配当前应用+环境的审批规则
-        loadEffectiveRule(env);
-      } else {
-        formData.value.require_approval = false;
-        effectiveRule.value = null;
-      }
+      loadEffectiveRule(env);
     } else {
       effectiveRule.value = null;
     }
@@ -102,10 +94,10 @@ async function loadData() {
 
     if (environments.value.length === 0) {
       environments.value = [
-        { code: 'dev', name: '开发环境', has_pipeline_config: false, requires_approval: false },
-        { code: 'test', name: '测试环境', has_pipeline_config: false, requires_approval: false },
-        { code: 'staging', name: '准生产环境', has_pipeline_config: false, requires_approval: true },
-        { code: 'production', name: '生产环境', has_pipeline_config: false, requires_approval: true },
+        { code: 'dev', name: '开发环境', has_pipeline_config: false },
+        { code: 'test', name: '测试环境', has_pipeline_config: false },
+        { code: 'staging', name: '准生产环境', has_pipeline_config: false },
+        { code: 'production', name: '生产环境', has_pipeline_config: false },
       ];
     }
 
@@ -292,9 +284,6 @@ const scopeLabelMap: Record<string, string> = {
               {{ env.name }}
               <Tag v-if="!env.has_pipeline_config" color="error" style="margin-left: 4px; font-size: 10px;">
                 未配置
-              </Tag>
-              <Tag v-if="env.requires_approval" color="warning" style="margin-left: 4px; font-size: 10px;">
-                需审批
               </Tag>
             </SelectOption>
           </Select>

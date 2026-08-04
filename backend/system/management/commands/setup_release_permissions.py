@@ -74,15 +74,6 @@ class Command(BaseCommand):
                 ]
             },
             {
-                'menu_path': '/release/environment-strategy',
-                'menu_name': 'EnvironmentStrategy',
-                'buttons': [
-                    {'name': 'EnvironmentStrategyCreate', 'title': '新增环境策略', 'auth_code': 'release:environment_strategy:create'},
-                    {'name': 'EnvironmentStrategyEdit', 'title': '编辑环境策略', 'auth_code': 'release:environment_strategy:edit'},
-                    {'name': 'EnvironmentStrategyDelete', 'title': '删除环境策略', 'auth_code': 'release:environment_strategy:delete'},
-                ]
-            },
-            {
                 'menu_path': '/release/record',
                 'menu_name': 'ReleaseRecord',
                 'buttons': [

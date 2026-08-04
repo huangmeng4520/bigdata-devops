@@ -59,15 +59,6 @@ const routes: RouteRecordRaw[] = [
         },
         component: () => import('#/views/release/codeRepository/index.vue'),
       },
-      {
-        path: '/release/environment-strategy',
-        name: 'ReleaseEnvironmentStrategy',
-        meta: {
-          icon: 'mdi:cog-outline',
-          title: '环境策略',
-        },
-        component: () => import('#/views/release/environmentStrategy/index.vue'),
-      },
       // 审批规则
       {
         path: '/release/approval-rule',

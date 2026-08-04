@@ -7,7 +7,6 @@ from .models import (
     Project, Module, Application, CodeRepository, ConfigPackage, SyncLog,
     PipelineTemplate, PipelineTemplateVersion,
     ApplicationPipelineConfig, ApplicationPipelineVersion,
-    EnvironmentStrategy,
     ReleaseRecord, ReleaseBuildLog, ApprovalRule, ApprovalRecord
 )
 
@@ -366,30 +365,6 @@ class ApplicationPipelineConfigCreateSerializer(serializers.ModelSerializer):
             "variables", "stages_config", "is_active"
         ]
         validators = []
-
-
-class EnvironmentStrategySerializer(serializers.ModelSerializer):
-    """环境策略序列化器"""
-    status_display = serializers.CharField(source='get_status_display', read_only=True)
-
-    class Meta:
-        model = EnvironmentStrategy
-        fields = "__all__"
-        read_only_fields = ["creator", "modifier", "create_time", "update_time"]
-
-
-class EnvironmentStrategyCreateSerializer(serializers.ModelSerializer):
-    """环境策略创建序列化器"""
-    name = serializers.CharField(required=False, allow_blank=True, default='')
-    code = serializers.CharField(required=False, allow_blank=True, default='')
-    description = serializers.CharField(required=False, allow_blank=True, default='')
-
-    class Meta:
-        model = EnvironmentStrategy
-        fields = [
-            "name", "code", "environment",
-            "requires_approval", "auto_deploy", "description", "is_default", "status"
-        ]
 
 
 # ============================================================

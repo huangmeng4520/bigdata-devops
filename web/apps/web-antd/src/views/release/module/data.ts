@@ -37,6 +37,7 @@ export function useSchema(): VbenFormSchema[] {
         showSearch: true,
         filterOption: (input: string, option: { label: string }) =>
           option.label.toLowerCase().includes(input.toLowerCase()),
+        style: { width: '100%' },
       },
     },
     {

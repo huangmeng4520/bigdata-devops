@@ -140,7 +140,6 @@ export interface Environment {
   code: string;
   name: string;
   has_pipeline_config: boolean;
-  requires_approval: boolean;
 }
 
 export interface Branch {

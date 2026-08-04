@@ -22,7 +22,7 @@ from system.models import (
 # release 模块业务模型（下划线，与前端按钮码一致：CodeRepository -> code_repository）
 RELEASE_MODELS = [
     'project', 'module', 'code_repository', 'application', 'config_package',
-    'application_pipeline_config', 'pipeline_template', 'environment_strategy',
+    'application_pipeline_config', 'pipeline_template',
     'release_record', 'sync_log', 'approval_rule',
 ]
 
@@ -51,7 +51,6 @@ PATH_MAP = {
     'config_package': '/release/config-package',
     'application_pipeline_config': '/release/pipeline',
     'pipeline_template': '/release/pipeline-template',
-    'environment_strategy': '/release/environment-strategy',
     'release_record': '/release/record',
     'sync_log': '/release/sync-log',
     'approval_rule': '/release/approval-rule',
@@ -251,7 +250,6 @@ class Command(BaseCommand):
             'module': ['query'],
             'code_repository': ['query'],
             'pipeline_template': ['query'],
-            'environment_strategy': ['query'],
             'approval_rule': ['query'],
         }
 
