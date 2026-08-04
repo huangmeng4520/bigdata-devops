@@ -30,6 +30,22 @@ from utils.data_permission import (
 from utils.permissions import HasMutateButtonPermission
 
 MAX_LOG_LENGTH = 200 * 1024
+MAX_EXTRACT_LENGTH = 30 * 1024
+
+# 构建日志中标识错误的关键字（小写匹配）
+ERROR_KEYWORDS = (
+    'error', 'failed', 'failure', 'exception', 'traceback',
+    'caused by', 'fatal', 'build failed', 'undefined',
+    'npm err', 'syntaxerror', 'modulenotfounderror',
+    'filenotfounderror', 'attributeerror', 'keyerror',
+    'indexerror', 'valueerror', 'typeerror', 'runtimeerror',
+    'connectionerror', 'timeout', 'denied', 'not found',
+    'cannot find', 'no such file', 'permission denied',
+    'exited with', 'return code', 'non-zero',
+)
+
+# 每个错误关键行前后保留的上下文行数
+ERROR_CONTEXT_LINES = 15
 
 
 def _get_pipeline_content(app, environment):
@@ -44,6 +60,56 @@ def _get_pipeline_content(app, environment):
     if config.custom_content:
         return config.custom_content
     return None
+
+
+def _extract_error_context(log_text):
+    """从构建日志中智能提取错误关键行及其上下文。
+
+    策略：定位含错误关键字的行，前后各保留 ERROR_CONTEXT_LINES 行上下文，
+    合并重叠区间；未匹配到关键字时回退为日志末尾 MAX_EXTRACT_LENGTH 字符。
+    """
+    if not log_text:
+        return ''
+
+    lines = log_text.split('\n')
+    if not lines:
+        return ''
+
+    error_indices = [
+        i for i, line in enumerate(lines)
+        if any(kw in line.lower() for kw in ERROR_KEYWORDS)
+    ]
+
+    # 未匹配到关键字：返回末尾片段
+    if not error_indices:
+        if len(log_text) <= MAX_EXTRACT_LENGTH:
+            return log_text
+        return '...(前部省略)...\n' + log_text[-MAX_EXTRACT_LENGTH:]
+
+    # 合并重叠的上下文区间
+    intervals = []
+    for idx in error_indices:
+        start = max(0, idx - ERROR_CONTEXT_LINES)
+        end = min(len(lines), idx + ERROR_CONTEXT_LINES + 1)
+        if intervals and start <= intervals[-1][1]:
+            intervals[-1][1] = max(intervals[-1][1], end)
+        else:
+            intervals.append([start, end])
+
+    result_lines = []
+    for i, (start, end) in enumerate(intervals):
+        if i > 0:
+            skipped = start - intervals[i - 1][1]
+            if skipped > 0:
+                result_lines.append(f'...(中间省略 {skipped} 行)...')
+        result_lines.extend(lines[start:end])
+
+    result = '\n'.join(result_lines)
+
+    # 仍然超长则按字符截断
+    if len(result) > MAX_EXTRACT_LENGTH:
+        result = result[:MAX_EXTRACT_LENGTH] + '\n...(日志过长，已截断)...'
+    return result
 
 
 class ReleaseRecordViewSet(DataPermissionMixin, CustomModelViewSet):
@@ -180,12 +246,15 @@ class ReleaseRecordViewSet(DataPermissionMixin, CustomModelViewSet):
             'pending': '已记录您的审批，等待其他审批人',
         }
         return Response({
+            "code": 0,
             "message": msg_map.get(result, '审批完成'),
-            "status": release.status,
-            "result": result,
-            "approved_count": release.approved_count,
-            "required_count": release.required_count,
-            "current_approver_ids": release.current_approver_ids,
+            "data": {
+                "status": release.status,
+                "result": result,
+                "approved_count": release.approved_count,
+                "required_count": release.required_count,
+                "current_approver_ids": release.current_approver_ids,
+            },
         })
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
@@ -214,27 +283,73 @@ class ReleaseRecordViewSet(DataPermissionMixin, CustomModelViewSet):
         notify_approval_result(release, request.user, approved=False)
 
         return Response({
+            "code": 0,
             "message": "审批已拒绝",
-            "status": release.status,
-            "result": result,
+            "data": {
+                "status": release.status,
+                "result": result,
+            },
         })
 
     @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
     def approval_progress(self, request, pk=None):
-        """审批进度：规则、已通过/待审批人、历史记录"""
+        """审批进度：规则、已通过/待审批人、当前节点、历史记录
+
+        补充字段：
+        - current_approver_names: 当前待审批人姓名列表（由 approvers 配置解析得到）
+        - current_stage / total_stage: 当前节点序号 / 节点总数（顺序审批场景）
+        - approved_approvers / pending_approvers: 已通过 / 待审批审批人明细，便于前端时间线展示
+        """
         release = self.get_object()
         records = release.approval_records.order_by('order', 'acted_at')
+
+        # 由 approvers 配置（[{"user_id", "username", "order"}]）解析当前待审批人姓名
+        approver_cfg_map = {
+            a.get('user_id'): a for a in (release.approvers or [])
+        }
+        current_approver_ids = release.current_approver_ids or []
+        current_approver_names = [
+            approver_cfg_map.get(uid, {}).get('username', f'用户{uid}')
+            for uid in current_approver_ids
+        ]
+
+        # 已通过 / 待审批审批人明细（基于历史记录 + 配置）
+        approved_ids = set(records.filter(action='approve').values_list('approver_id', flat=True))
+        approved_approvers = [
+            {'user_id': a.get('user_id'), 'username': a.get('username'), 'order': a.get('order', 0)}
+            for a in (release.approvers or []) if a.get('user_id') in approved_ids
+        ]
+        pending_approvers = [
+            {'user_id': a.get('user_id'), 'username': a.get('username'), 'order': a.get('order', 0)}
+            for a in (release.approvers or []) if a.get('user_id') not in approved_ids
+        ]
+
+        # 节点信息：顺序审批时给出当前节点序号
+        total_stage = len(release.approvers or []) if release.approvers else 0
+        if release.approval_type == 'sequential' and total_stage:
+            current_stage = len(approved_approvers) + 1
+            if current_stage > total_stage:
+                current_stage = total_stage
+        else:
+            current_stage = 1 if current_approver_ids else 0
+
         return Response({
             "code": 0,
             "data": {
                 "status": release.status,
+                "status_display": release.get_status_display(),
                 "rule_type": release.approval_type,
                 "scope": release.approval_scope,
                 "rule_name": release.approval_rule.name if release.approval_rule else None,
                 "rule_code": release.approval_rule.code if release.approval_rule else None,
                 "approved_count": release.approved_count,
                 "required_count": release.required_count,
-                "current_approver_ids": release.current_approver_ids,
+                "current_approver_ids": current_approver_ids,
+                "current_approver_names": current_approver_names,
+                "current_stage": current_stage,
+                "total_stage": total_stage,
+                "approved_approvers": approved_approvers,
+                "pending_approvers": pending_approvers,
                 "deadline": release.approval_deadline,
                 "approvers": release.approvers,
                 "history": ApprovalRecordSerializer(records, many=True).data,
@@ -285,8 +400,8 @@ class ReleaseRecordViewSet(DataPermissionMixin, CustomModelViewSet):
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def ai_analysis(self, request, pk=None):
-        """AI 分析：创建对话保存日志，调用 AI 并保存回复，返回 conversation_id"""
-        from ai.models import ChatConversation, ChatMessage, AIModel
+        """AI 分析：智能提取错误日志上下文，创建对话并返回预填内容供用户确认后发送"""
+        from ai.models import ChatConversation, AIModel
 
         release = self.get_object()
         if release.status != 'build_failed':
@@ -301,35 +416,42 @@ class ReleaseRecordViewSet(DataPermissionMixin, CustomModelViewSet):
         if len(log_text) > MAX_LOG_LENGTH:
             log_text = '...(前部省略)...\n' + log_text[-MAX_LOG_LENGTH:]
 
+        # 智能提取错误关键行及上下文，避免发送全量日志
+        error_context = _extract_error_context(log_text)
+
         pipeline_content = _get_pipeline_content(app, release.environment)
         project_name = app.project.name if app.project else '-'
         module_name = app.module.name if app.module else '-'
 
-        system_parts = [
-            "你是一个 DevOps 构建失败分析专家。请分析以下构建失败原因。",
+        prompt_parts = [
+            "你是一个 DevOps 构建失败分析专家。请分析以下构建失败原因并给出修复建议。",
             "",
             f"应用：{app.name} ({app.code})",
             f"项目：{project_name} / 模块：{module_name}",
             f"分支：{release.branch} | 环境：{release.environment} | 版本：{release.version or '-'}",
         ]
         if pipeline_content:
-            system_parts.extend([
+            prompt_parts.extend([
                 "",
                 "该应用的 Pipeline 配置（Jenkinsfile）：",
                 "```",
                 pipeline_content,
                 "```",
             ])
-        system_prompt = '\n'.join(system_parts)
-
-        user_prompt = f"以下是本次构建的日志输出，请分析失败原因并给出修复建议：\n\n```\n{log_text}\n```"
-
-        full_user_msg = system_prompt + '\n\n---\n\n' + user_prompt
+        prompt_parts.extend([
+            "",
+            "以下是本次构建的日志（已智能提取错误相关片段）：",
+            "```",
+            error_context,
+            "```",
+            "",
+            "请分析失败原因并给出修复建议。",
+        ])
+        full_prompt = '\n'.join(prompt_parts)
 
         ai_model = AIModel.objects.filter(status=1).select_related('key').first()
         model_name = ai_model.model if ai_model else 'deepseek-chat'
 
-        from django.utils import timezone
         now_str = timezone.now().strftime('%m-%d %H:%M')
         conversation = ChatConversation.objects.create(
             title=f"构建分析: {app.name} #{release.jenkins_build_number or ''} {now_str}",
@@ -340,16 +462,15 @@ class ReleaseRecordViewSet(DataPermissionMixin, CustomModelViewSet):
             max_contexts=10,
         )
 
-        ChatMessage.objects.create(
-            conversation_id=conversation.id, model=model_name,
-            type='user', content=full_user_msg[:2000],
-            use_context=False,
-        )
-
         release.conversation_id = conversation.id
         release.save(update_fields=['conversation_id'])
 
-        return self._build_response(data={"conversation_id": conversation.id})
+        # 不再预存 user 消息：把完整 prompt 返回给前端，预填到输入框，
+        # 由用户确认/编辑后手动发送，发送时按正常流程落库并调用 LLM
+        return self._build_response(data={
+            "conversation_id": conversation.id,
+            "content": full_prompt,
+        })
 
 
 class ApprovalRuleViewSet(CustomModelViewSet):
@@ -453,7 +574,7 @@ def trigger_release(request, app_id):
             {"error": "无权限触发发布"},
             status=status.HTTP_403_FORBIDDEN
         )
-    if not user_has_scope_access(request.user, 'application', application.id):
+    if not user_has_scope_access(request.user, 'project', application.project_id):
         return Response(
             {"error": "无权限操作该应用"},
             status=status.HTTP_403_FORBIDDEN
@@ -590,7 +711,7 @@ def get_app_branches(request, app_id):
         )
 
     # 数据权限校验：仅可访问被分配的应用
-    if not user_has_scope_access(request.user, 'application', application.id):
+    if not user_has_scope_access(request.user, 'project', application.project_id):
         return Response(
             {"error": "无权限操作该应用"},
             status=status.HTTP_403_FORBIDDEN
@@ -637,7 +758,7 @@ def get_app_environments(request, app_id):
         )
 
     # 数据权限校验：仅可访问被分配的应用
-    if not user_has_scope_access(request.user, 'application', application.id):
+    if not user_has_scope_access(request.user, 'project', application.project_id):
         return Response(
             {"error": "无权限操作该应用"},
             status=status.HTTP_403_FORBIDDEN

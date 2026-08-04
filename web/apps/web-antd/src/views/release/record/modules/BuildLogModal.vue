@@ -42,8 +42,12 @@ async function handleAIAnalyze() {
   try {
     const res = await createAIAnalysis(releaseId.value);
     const conversationId = res.conversation_id ?? res;
+    const content = res.content;
+    if (content) {
+      sessionStorage.setItem('ai_chat_prefill', content);
+    }
     modalApi.close();
-    router.push({ path: '/ai/chat', query: { conversation_id: conversationId, auto_send: '1' } });
+    router.push({ path: '/ai/chat', query: { conversation_id: conversationId, prefill: '1' } });
   } catch (err: any) {
     message.error(err?.response?.data?.error || err?.message || '创建 AI 分析失败');
   }

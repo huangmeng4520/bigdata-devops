@@ -426,6 +426,8 @@ class ReleaseRecordSerializer(serializers.ModelSerializer):
     approval_rule_name = serializers.CharField(source="approval_rule.name", read_only=True)
     approval_rule_code = serializers.CharField(source="approval_rule.code", read_only=True, default=None)
     rule_type_display = serializers.SerializerMethodField()
+    # 当前待审批人姓名列表：列表页无需额外请求 approval_progress 即可展示节点/审批人
+    current_approver_names = serializers.SerializerMethodField()
 
     class Meta:
         model = ReleaseRecord
@@ -443,6 +445,16 @@ class ReleaseRecordSerializer(serializers.ModelSerializer):
         if obj.approval_rule:
             return obj.approval_rule.get_rule_type_display()
         return None
+
+    def get_current_approver_names(self, obj):
+        """由 approvers 配置 [{"user_id","username","order"}] 解析当前待审批人姓名"""
+        approver_cfg_map = {
+            a.get('user_id'): a for a in (obj.approvers or [])
+        }
+        return [
+            approver_cfg_map.get(uid, {}).get('username', f'用户{uid}')
+            for uid in (obj.current_approver_ids or [])
+        ]
 
 
 class ReleaseCreateSerializer(serializers.Serializer):

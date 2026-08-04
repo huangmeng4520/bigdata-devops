@@ -82,6 +82,8 @@ async function handleNewChat() {
 }
 
 async function handleSend() {
+  if (!input.value.trim() || isAiTyping.value) return;
+
   const userMsg: Message = { id: null, type: 'user', content: input.value };
   messages.value.push(userMsg);
 
@@ -103,50 +105,42 @@ async function handleSend() {
 
   input.value = '';
 
-  for await (const chunk of stream) {
-    messages.value[aiIndex]!.content += chunk;
+  // 流式渲染节流：每帧最多更新一次 DOM，避免每个 chunk 都全量重渲染
+  let rafId: null | number = null;
+  let scrollPending = false;
+  const flush = () => {
+    rafId = null;
     messages.value.splice(aiIndex, 1, { ...messages.value[aiIndex]! });
-    await nextTick();
-    scrollToBottom();
-  }
+    if (!scrollPending) {
+      scrollPending = true;
+      requestAnimationFrame(() => {
+        scrollPending = false;
+        scrollToBottom();
+      });
+    }
+  };
 
-  isAiTyping.value = false;
-  nextTick(scrollToBottom);
+  try {
+    for await (const chunk of stream) {
+      messages.value[aiIndex]!.content += chunk;
+      if (rafId === null) {
+        rafId = requestAnimationFrame(flush);
+      }
+    }
+  } finally {
+    if (rafId !== null) {
+      cancelAnimationFrame(rafId);
+    }
+    flush();
+    isAiTyping.value = false;
+    nextTick(scrollToBottom);
+  }
 }
 
 function scrollToBottom() {
   if (messagesRef.value) {
     messagesRef.value.scrollTop = messagesRef.value.scrollHeight;
   }
-}
-
-async function autoSend() {
-  const lastMsg = messages.value[messages.value.length - 1];
-  if (!lastMsg || lastMsg.type !== 'user') return;
-
-  const aiMsg: Message = { id: null, type: 'assistant', content: '' };
-  messages.value.push(aiMsg);
-  const aiIndex = messages.value.length - 1;
-
-  isAiTyping.value = true;
-  try {
-    const stream = await fetchAIStream({
-      content: lastMsg.content,
-      platform: selectedPlatform.value,
-      conversation_id: selectedChatId.value,
-      resume: true,
-    });
-    for await (const chunk of stream) {
-      messages.value[aiIndex]!.content += chunk;
-      messages.value.splice(aiIndex, 1, { ...messages.value[aiIndex]! });
-      await nextTick();
-      scrollToBottom();
-    }
-  } catch {
-    // stream failed silently
-  }
-  isAiTyping.value = false;
-  nextTick(scrollToBottom);
 }
 
 async function fetchConversations() {
@@ -162,8 +156,22 @@ async function fetchConversations() {
   if (targetId) {
     selectedChatId.value = targetId;
     await selectChat(targetId);
-    if (route.query.auto_send !== undefined) {
-      await autoSend();
+  }
+  // 来自发布记录 AI 分析的预填内容：写入输入框由用户确认后手动发送
+  if (route.query.prefill !== undefined) {
+    const prefillContent = sessionStorage.getItem('ai_chat_prefill');
+    if (prefillContent) {
+      input.value = prefillContent;
+      sessionStorage.removeItem('ai_chat_prefill');
+      nextTick(() => {
+        const textarea = document.querySelector(
+          '.chat-input-wrap textarea',
+        ) as HTMLTextAreaElement | null;
+        if (textarea) {
+          textarea.focus();
+          textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+        }
+      });
     }
   }
 }
@@ -317,17 +325,19 @@ onMounted(() => {
 
 .chat-messages {
   flex: 1; overflow-y: auto;
-  padding: 24px 16px 120px 16px;
+  padding: 28px 24px 140px 24px;
   scrollbar-width: thin; scrollbar-color: #d6dee1 transparent;
 }
 .chat-messages::-webkit-scrollbar { width: 6px; }
 .chat-messages::-webkit-scrollbar-thumb { background: #d6dee1; border-radius: 4px; }
 .chat-messages::-webkit-scrollbar-track { background: transparent; }
 
+/* 单条消息：限制最大宽度，居中显示，提升长文阅读体验 */
 .chat-message {
   display: flex;
-  gap: 12px;
-  margin-bottom: 24px;
+  gap: 14px;
+  max-width: 860px;
+  margin: 0 auto 28px auto;
   padding: 0 8px;
 }
 
@@ -337,28 +347,33 @@ onMounted(() => {
   display: flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: 600;
   flex-shrink: 0;
-  margin-top: 4px;
+  margin-top: 2px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
 }
-.msg-avatar.assistant { background: #1677ff; color: #fff; }
-.msg-avatar.user { background: #52c41a; color: #fff; }
+.msg-avatar.assistant { background: linear-gradient(135deg, #4d6bfe, #1677ff); color: #fff; }
+.msg-avatar.user { background: linear-gradient(135deg, #52c41a, #389e0d); color: #fff; }
 
 .msg-body {
   flex: 1; min-width: 0;
 }
 .msg-role {
-  font-size: 13px; font-weight: 500;
-  color: #333; margin-bottom: 4px;
+  font-size: 13px; font-weight: 600;
+  color: #1f1f1f; margin-bottom: 6px;
+  letter-spacing: 0.2px;
 }
 .msg-content {
-  line-height: 1.6;
+  font-size: 15px;
+  line-height: 1.75;
+  color: #1f1f1f;
 }
 .user-text {
   display: inline-block;
-  background: #f0f0f0;
-  padding: 8px 14px;
-  border-radius: 12px 12px 4px 12px;
+  background: #f0f2f5;
+  padding: 10px 16px;
+  border-radius: 14px 14px 4px 14px;
   font-size: 15px;
-  color: #1e1e1e;
+  line-height: 1.7;
+  color: #1f1f1f;
   white-space: pre-wrap;
   word-break: break-word;
   max-width: 100%;
@@ -385,12 +400,16 @@ onMounted(() => {
 
 .chat-input-wrap {
   position: absolute;
-  left: 24px; right: 24px; bottom: 20px;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  width: calc(100% - 48px);
+  max-width: 860px;
   background: #fff;
   border: 1px solid #e0e0e0;
-  border-radius: 12px;
-  padding: 8px 12px;
+  border-radius: 14px;
+  padding: 10px 14px;
   z-index: 10;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
 }
 </style>

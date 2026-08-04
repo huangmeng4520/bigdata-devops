@@ -161,7 +161,10 @@ class ApprovalEngine:
             self.release.approval_time = timezone.now()
             self.release.approval_comment = comment
             self.release.status_message = f'被 {user.username} 拒绝'
-            self.release.save()
+            self.release.save(update_fields=[
+                'status', 'approval_user', 'approval_time',
+                'approval_comment', 'status_message',
+            ])
             return 'rejected'
 
         # 通过
@@ -176,7 +179,11 @@ class ApprovalEngine:
             self.release.approval_user = user.username
             self.release.approval_comment = comment
             self.release.status_message = '审批通过，自动触发构建'
-            self.release.save()
+            self.release.save(update_fields=[
+                'status', 'approval_time', 'approval_user',
+                'approval_comment', 'status_message',
+                'approved_count', 'current_approver_ids',
+            ])
             # 自动触发 Jenkins 构建
             from .tasks import trigger_jenkins_build
             trigger_jenkins_build.delay(self.release.id)
@@ -184,5 +191,7 @@ class ApprovalEngine:
 
         # 等待其他审批人
         self.release.status_message = f'已通过 {self.release.approved_count}/{self.release.required_count}'
-        self.release.save()
+        self.release.save(update_fields=[
+            'approved_count', 'current_approver_ids', 'status_message',
+        ])
         return 'pending'

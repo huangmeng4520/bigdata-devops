@@ -24,6 +24,9 @@ export namespace ApprovalApi {
    * 由 release-records/{id}/approval_progress/ 返回
    */
   export interface ApprovalProgress {
+    /** 发布状态 */
+    status?: string;
+    status_display?: string;
     /** 规则类型 */
     rule_type?: 'all' | 'any' | 'sequential' | 'single';
     /** 作用域 */
@@ -41,6 +44,22 @@ export namespace ApprovalApi {
     current_approver_ids: number[];
     /** 当前待审批人姓名列表 */
     current_approver_names?: string[];
+    /** 当前节点序号（顺序审批时表示第几节点） */
+    current_stage?: number;
+    /** 节点总数 */
+    total_stage?: number;
+    /** 已通过审批人明细 */
+    approved_approvers?: Array<{
+      user_id: number;
+      username: string;
+      order?: number;
+    }>;
+    /** 待审批审批人明细 */
+    pending_approvers?: Array<{
+      user_id: number;
+      username: string;
+      order?: number;
+    }>;
     /** 审批截止时间 */
     deadline?: string;
     /** 全部审批人列表 */

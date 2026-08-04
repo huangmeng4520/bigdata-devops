@@ -377,7 +377,7 @@ export function useColumns(
       headerAlign: 'center',
       showOverflow: false,
       title: '操作',
-      width: 280,
+      width: 310,
     },
   ];
 }
