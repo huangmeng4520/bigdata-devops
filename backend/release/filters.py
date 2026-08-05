@@ -2,6 +2,8 @@
 """
 发布管理过滤器
 """
+from django.db.models import Q
+
 import django_filters
 from .models import (
     Project, Module, Application, CodeRepository, ConfigPackage, SyncLog,
@@ -152,16 +154,45 @@ class ReleaseRecordFilter(django_filters.FilterSet):
     project = django_filters.NumberFilter(field_name='application__project_id')
     module = django_filters.NumberFilter(field_name='application__module_id')
     environment = django_filters.CharFilter()
-    status = django_filters.CharFilter()
+    status = django_filters.CharFilter(method='filter_status', lookup_expr='')
     branch = django_filters.CharFilter(lookup_expr='icontains')
     version = django_filters.CharFilter(lookup_expr='icontains')
-    released_by = django_filters.CharFilter(lookup_expr='icontains')
+    released_by = django_filters.CharFilter(method='filter_released_by', lookup_expr='')
     start_date = django_filters.DateFilter(field_name='create_time__date', lookup_expr='gte')
     end_date = django_filters.DateFilter(field_name='create_time__date', lookup_expr='lte')
 
     class Meta:
         model = ReleaseRecord
         fields = ['application', 'application_name', 'project', 'module', 'environment', 'status', 'branch', 'version', 'released_by', 'start_date', 'end_date']
+
+    def filter_status(self, queryset, name, value):
+        """
+        发布状态筛选：
+        - approved（已审批）是瞬时状态（审批通过即触发构建并切换为 building），
+          因此对 approved 做语义扩展：匹配所有曾经审批通过的记录
+          （require_approval=True 且 approval_user 非空 且非拒绝/待审批状态）。
+        - 其他状态保持精确匹配。
+        """
+        if value == 'approved':
+            return queryset.filter(
+                Q(require_approval=True)
+                & Q(approval_user__isnull=False)
+                & ~Q(approval_user__exact='')
+                & ~Q(status__in=['rejected', 'approval_pending'])
+            )
+        return queryset.filter(status=value)
+
+    def filter_released_by(self, queryset, name, value):
+        """
+        发布人筛选：released_by 字段存的是 username，
+        支持按 username 精确匹配或 nickname 模糊匹配（关联 system_users 表）。
+        """
+        from system.models import User
+        # 先查到匹配的用户名列表（username 或 nickname 命中）
+        matched_usernames = User.objects.filter(
+            Q(username=value) | Q(nickname__icontains=value)
+        ).values_list('username', flat=True)
+        return queryset.filter(released_by__in=list(matched_usernames))
 
 
 class ReleaseBuildLogFilter(django_filters.FilterSet):

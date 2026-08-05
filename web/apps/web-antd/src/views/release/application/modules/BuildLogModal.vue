@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, watch, onUnmounted } from 'vue';
+import { ref, nextTick, onUnmounted } from 'vue';
 import { useVbenModal } from '@vben/common-ui';
 import { Badge, Button, Spin, Tag, Tooltip } from 'ant-design-vue';
 import { getBuildLogs, getReleaseDetail, RELEASE_STATUS_MAP } from '#/api/release';
@@ -10,6 +10,22 @@ const emit = defineEmits<{
 
 const [Modal, modalApi] = useVbenModal({
   onConfirm: handleConfirm,
+  onOpenChange(isOpen: boolean) {
+    if (isOpen) {
+      const data = modalApi.getData<{ id: number }>();
+      if (data?.id) {
+        releaseId.value = data.id;
+        // 用 nextTick 延迟到弹窗 Transition 动画开始后再加载，
+        // 避免与 Dialog 打开动画冲突触发 <Spin> slot 警告
+        nextTick(() => {
+          loadReleaseInfo();
+          loadLogs();
+        });
+      }
+    } else {
+      stopAutoRefresh();
+    }
+  },
 });
 
 // 发布记录
@@ -40,23 +56,6 @@ const statusColorMap: Record<string, string> = {
 
 // 是否可以刷新日志
 const canRefresh = ref(true);
-
-// 监听弹窗打开
-watch(
-  () => modalApi.isOpen?.value,
-  (isOpen) => {
-    if (isOpen) {
-      const data = modalApi.getData<{ id: number }>();
-      if (data?.id) {
-        releaseId.value = data.id;
-        loadReleaseInfo();
-        loadLogs();
-      }
-    } else {
-      stopAutoRefresh();
-    }
-  },
-);
 
 // 加载发布信息
 async function loadReleaseInfo() {

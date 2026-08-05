@@ -28,6 +28,7 @@ import {
   retryBuild,
 } from '#/api/release/record';
 import { getMyApprovalTasks } from '#/api/release';
+import { getUserList } from '#/api/release/deployment';
 import { hasPermission } from '#/utils/permission';
 
 import ApprovalDetailDrawer from './modules/ApprovalDetailDrawer.vue';
@@ -38,9 +39,44 @@ const searchForm = reactive({
   application_name: '',
   environment: undefined as string | undefined,
   status: undefined as string | undefined,
-  released_by: '',
+  released_by: undefined as string | undefined,
   dateRange: [] as any[],
 });
+
+// 发布人远程搜索
+const userOptions = ref<{ label: string; value: string }[]>([]);
+const userSearchLoading = ref(false);
+let userSearchTimer: any = null;
+
+async function searchUsers(keyword: string) {
+  if (!keyword) {
+    userOptions.value = [];
+    return;
+  }
+  userSearchLoading.value = true;
+  try {
+    const res = await getUserList({ search: keyword, page: 1, pageSize: 20 });
+    // 后端 CustomPagination 返回 { code, message, data: { total, items: [...] } }
+    // defaultResponseInterceptor 自动提取 data 字段，因此 res 实际为 { total, items: [...] }
+    // 兼容非分页响应（res 直接是数组）和分页响应
+    const list =
+      Array.isArray(res) ? res :
+      res?.items || res?.results || res?.data?.items || res?.data?.results || [];
+    userOptions.value = list.map((u: any) => ({
+      label: u.nickname ? `${u.nickname}（${u.username}）` : u.username,
+      value: u.username,
+    }));
+  } finally {
+    userSearchLoading.value = false;
+  }
+}
+
+function handleUserSearch(value: string) {
+  if (userSearchTimer) clearTimeout(userSearchTimer);
+  userSearchTimer = setTimeout(() => {
+    searchUsers(value);
+  }, 300);
+}
 
 // 是否处于"我的待办"模式
 const myTodoMode = ref(false);
@@ -287,9 +323,10 @@ function handleReset() {
     application_name: '',
     environment: undefined,
     status: undefined,
-    released_by: '',
+    released_by: undefined,
     dateRange: [],
   });
+  userOptions.value = [];
   myTodoMode.value = false;
   pagination.current = 1;
   loadData();
@@ -434,12 +471,17 @@ onMounted(() => {
           </Select>
         </Form.Item>
         <Form.Item label="发布人">
-          <Input
+          <Select
             v-model:value="searchForm.released_by"
-            placeholder="请输入发布人"
+            placeholder="请选择发布人"
             allow-clear
-            style="width: 120px"
-            @press-enter="handleSearch"
+            show-search
+            :filter-option="false"
+            :options="userOptions"
+            :loading="userSearchLoading"
+            style="width: 200px"
+            @search="handleUserSearch"
+            @change="handleSearch"
           />
         </Form.Item>
         <Form.Item label="发布时间">

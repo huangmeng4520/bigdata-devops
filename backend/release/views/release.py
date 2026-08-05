@@ -377,7 +377,11 @@ class ReleaseRecordViewSet(DataPermissionMixin, CustomModelViewSet):
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def retry(self, request, pk=None):
-        """重试构建"""
+        """
+        重试构建：基于原发布记录创建一条新的发布记录，并触发构建。
+        原记录保留不变，便于历史追溯。
+        若原记录有审批记录，会复制审批历史到新记录（不重新走审批流程）。
+        """
         release = self.get_object()
 
         if release.status not in ['build_failed', 'cancelled']:
@@ -386,16 +390,58 @@ class ReleaseRecordViewSet(DataPermissionMixin, CustomModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        release.status = 'building'
-        release.status_message = "正在重试构建..."
-        release.save(update_fields=['status', 'status_message'])
+        # 基于原记录的关键发布字段创建新记录
+        new_release = ReleaseRecord.objects.create(
+            application=release.application,
+            branch=release.branch,
+            environment=release.environment,
+            version=release.version,
+            require_approval=release.require_approval,
+            approval_type=release.approval_type,
+            approval_rule=release.approval_rule,
+            approval_scope=release.approval_scope,
+            approvers=release.approvers or [],
+            approval_user=release.approval_user,
+            approval_time=release.approval_time,
+            approval_comment=release.approval_comment,
+            approved_count=release.approved_count or 0,
+            required_count=release.required_count or 0,
+            status='pending',
+            released_by=request.user.username,
+            remark=release.remark or '',
+        )
+
+        # 复制原记录的审批操作历史到新记录（仅展示用，不重新触发审批流程）
+        from ..models import ApprovalRecord
+        old_approval_records = ApprovalRecord.objects.filter(
+            release=release
+        ).order_by('order', 'acted_at')
+        if old_approval_records.exists():
+            ApprovalRecord.objects.bulk_create([
+                ApprovalRecord(
+                    release=new_release,
+                    rule=ar.rule,
+                    approver_id=ar.approver_id,
+                    approver_name=ar.approver_name,
+                    order=ar.order,
+                    action=ar.action,
+                    comment=ar.comment,
+                    acted_at=ar.acted_at,
+                    delegate_to_id=ar.delegate_to_id,
+                    delegate_to_name=ar.delegate_to_name,
+                )
+                for ar in old_approval_records
+            ])
 
         from ..tasks import trigger_jenkins_build
-        trigger_jenkins_build.delay(release.id)
+        trigger_jenkins_build.delay(new_release.id)
 
         return Response({
-            "message": "重试构建已触发",
-            "release_id": release.id
+            "code": 0,
+            "data": {
+                "release_id": new_release.id,
+                "message": "重试构建已触发（已创建新发布记录）"
+            }
         })
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])

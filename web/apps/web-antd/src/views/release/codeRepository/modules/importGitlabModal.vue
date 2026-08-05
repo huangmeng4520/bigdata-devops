@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed } from 'vue';
 
 import { Input, message, Pagination, Spin, Tag } from 'ant-design-vue';
 
@@ -124,10 +124,6 @@ function selectAll() {
     selectedIds.value = importableProjects.value.map(p => p.id);
   }
 }
-
-onMounted(() => {
-  fetchProjects();
-});
 
 const [Modal, modalApi] = useVbenModal({
   onConfirm: handleConfirm,

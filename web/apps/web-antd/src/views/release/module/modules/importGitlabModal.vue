@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, onMounted } from 'vue';
+import { ref } from 'vue';
 
 import { message, Spin, Select } from 'ant-design-vue';
 
@@ -129,10 +129,6 @@ function selectAll() {
     selectedIds.value = subgroups.value.map(s => s.id);
   }
 }
-
-onMounted(() => {
-  fetchProjects();
-});
 
 const [Modal, modalApi] = useVbenModal({
   onConfirm: handleConfirm,

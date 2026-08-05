@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, watch, computed, onUnmounted } from 'vue';
+import { ref, computed, nextTick, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useVbenModal } from '@vben/common-ui';
 import { Badge, Button, Divider, message, Spin, Tag, Tooltip } from 'ant-design-vue';
@@ -33,6 +33,18 @@ function handleConfirm() {
 
 const [Modal, modalApi] = useVbenModal({
   onConfirm: handleConfirm,
+  onOpenChange(isOpen: boolean) {
+    if (isOpen && releaseId.value) {
+      // 用 nextTick 延迟到弹窗 Transition 动画开始后再加载，
+      // 避免与 Dialog 打开动画冲突触发 <Spin> slot 警告
+      nextTick(() => {
+        loadReleaseInfo();
+        loadLogs();
+      });
+    } else {
+      stopAutoRefresh();
+    }
+  },
 });
 
 const router = useRouter();
@@ -55,22 +67,28 @@ async function handleAIAnalyze() {
 
 // 对外暴露的方法
 function open(id: number) {
-  releaseId.value = id;
-  modalApi.open();
-}
+  const isAlreadyOpen = modalApi.store.state.isOpen;
+  const isSwitching = releaseId.value !== id;
 
-// 监听弹窗打开
-watch(
-  () => modalApi.isOpen?.value,
-  (isOpen) => {
-    if (isOpen && releaseId.value) {
+  // 切换到不同记录：先清空旧内容，避免显示上一条记录的日志/信息
+  if (isSwitching) {
+    releaseId.value = id;
+    logContent.value = '';
+    releaseInfo.value = null;
+    stopAutoRefresh();
+  }
+
+  if (isAlreadyOpen) {
+    // 弹窗已打开（切换记录）：onOpenChange 不会再触发，需要手动加载
+    if (isSwitching) {
       loadReleaseInfo();
       loadLogs();
-    } else {
-      stopAutoRefresh();
     }
-  },
-);
+  } else {
+    // 弹窗未打开：调用 open() 让 onOpenChange 回调来加载
+    modalApi.open();
+  }
+}
 
 // 加载发布信息
 async function loadReleaseInfo() {

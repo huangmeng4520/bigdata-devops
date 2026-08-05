@@ -9,7 +9,18 @@ import {
   getReleaseTrend,
   getAppReleaseRank,
   ENVIRONMENT_MAP,
+  RELEASE_STATUS_MAP,
 } from '#/api/release/record';
+
+// 状态码 -> 中文名称
+function getStatusName(code: string): string {
+  return RELEASE_STATUS_MAP[code]?.text || code;
+}
+
+// 状态码 -> Badge/Tag 颜色
+function getStatusColor(code: string): string {
+  return RELEASE_STATUS_MAP[code]?.color || 'default';
+}
 
 // 日期范围
 const dateRange = ref<any[]>([
@@ -227,8 +238,8 @@ function getEnvName(code: string): string {
         <Card :bordered="false" :loading="loading">
           <div class="stat-list">
             <div v-for="item in statistics.status_stats" :key="item.status" class="stat-item">
-              <Tag :color="item.status === 'build_success' ? 'success' : (item.status === 'build_failed' ? 'error' : 'processing')">
-                {{ item.status }}
+              <Tag :color="getStatusColor(item.status)">
+                {{ getStatusName(item.status) }}
               </Tag>
               <Progress :percent="statistics.total > 0 ? Math.round((item.count / statistics.total) * 100) : 0" />
               <span class="stat-value">{{ item.count }} 次</span>

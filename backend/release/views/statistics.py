@@ -126,7 +126,10 @@ def get_trend(request):
                 'failed': 0,
             })
         current_date += timedelta(days=1)
-    
+
+    # 按最近时间倒序排列，便于在表格中优先查看最新数据
+    date_list.reverse()
+
     return Response({
         'code': 0,
         'data': date_list,

@@ -1,9 +1,8 @@
 <script lang="ts" setup>
-import type { ReleaseApplicationApi } from '#/api/release';
-
 import { computed, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
+import { useDebounceFn } from '@vueuse/core';
 
 import { message } from 'ant-design-vue';
 import {
@@ -16,6 +15,7 @@ import {
   InputSearch as AInputSearch,
   Menu as AMenu,
   MenuItem as AMenuItem,
+  Pagination as APagination,
   Row as ARow,
   Spin as ASpin,
   Tooltip as ATooltip,
@@ -27,7 +27,7 @@ import {
   assignDataPermission,
   getScopeUsers,
 } from '#/api/system/dataPermissionRule';
-import { hasPermission, op } from '#/utils/permission';
+import { hasPermission } from '#/utils/permission';
 
 const canQuery = computed(() => hasPermission('system:data_permission_rule:query'));
 const canEdit = computed(() => hasPermission('system:data_permission_rule:edit'));
@@ -38,11 +38,14 @@ interface ProjectItem {
   code: string;
 }
 
-// 项目列表（左侧，数据权限根节点）
+// 项目列表（左侧，数据权限根节点）—— 后端分页 + 远程搜索
+const PROJECT_PAGE_SIZE = 20;
 const projects = ref<ProjectItem[]>([]);
 const projectLoading = ref(false);
 const selectedProjectId = ref<null | number>(null);
 const projectKeyword = ref('');
+const projectPage = ref(1);
+const projectTotal = ref(0);
 
 // 用户池（右侧研发）
 const allUsers = ref<{ id: number; nickname: string; username: string }[]>([]);
@@ -53,17 +56,14 @@ const keyword = ref('');
 const assignedUserIds = ref<number[]>([]);
 const saving = ref(false);
 
-const selectedProject = computed(() =>
-  projects.value.find((p) => p.id === selectedProjectId.value),
-);
-
-const filteredProjects = computed(() => {
-  if (!projectKeyword.value) return projects.value;
-  const kw = projectKeyword.value.toLowerCase();
-  return projects.value.filter(
-    (p) =>
-      p.name.toLowerCase().includes(kw) ||
-      p.code.toLowerCase().includes(kw),
+// 选中项目可能在其他分页，独立保存其展示信息，避免翻页后右侧标题丢失
+const selectedProjectInfo = ref<null | ProjectItem>(null);
+const selectedProject = computed(() => {
+  if (selectedProjectId.value === null) return null;
+  // 优先从当前页查找（保证名称/code 实时一致），否则回退到记录的信息
+  return (
+    projects.value.find((p) => p.id === selectedProjectId.value) ||
+    selectedProjectInfo.value
   );
 });
 
@@ -80,17 +80,39 @@ const filteredUsers = computed(() => {
 async function loadProjects() {
   projectLoading.value = true;
   try {
-    const res = await getProjectList({
-      page: 1,
-      pageSize: 999,
+    const params: Record<string, any> = {
+      page: projectPage.value,
+      pageSize: PROJECT_PAGE_SIZE,
       status: 1,
-    });
-    // 兼容后端两种返回结构：{items} 或 {data}
-    const list = (res as any).items ?? (res as any).data ?? [];
+    };
+    if (projectKeyword.value) {
+      // ProjectFilter.name 为 icontains 模糊匹配
+      params.name = projectKeyword.value;
+    }
+    const res = await getProjectList(params);
+    const data = (res as any) || {};
+    const list = data.items ?? data.data ?? [];
     projects.value = list;
+    projectTotal.value = data.total ?? list.length ?? 0;
   } finally {
     projectLoading.value = false;
   }
+}
+
+// 远程搜索防抖：输入即查后端，避免一次性加载全部
+const debouncedSearchProjects = useDebounceFn(() => {
+  projectPage.value = 1;
+  loadProjects();
+}, 350);
+
+function onProjectKeywordChange() {
+  // v-model 已同步 projectKeyword，仅触发防抖搜索
+  debouncedSearchProjects();
+}
+
+function onProjectPageChange(page: number) {
+  projectPage.value = page;
+  loadProjects();
 }
 
 async function loadUsers() {
@@ -115,12 +137,11 @@ async function loadScopeUsers(projectId: number) {
   assignedUserIds.value = (res || []).map((r) => r.user_id);
 }
 
-async function onSelectProject(projectId: number) {
-  selectedProjectId.value = projectId;
+async function onSelectProject(project: ProjectItem) {
+  selectedProjectId.value = project.id;
+  selectedProjectInfo.value = project;
   assignedUserIds.value = [];
-  if (projectId !== null) {
-    await loadScopeUsers(projectId);
-  }
+  await loadScopeUsers(project.id);
 }
 
 async function onSave() {
@@ -142,12 +163,8 @@ async function onSave() {
 
 onMounted(async () => {
   if (!canQuery) return;
-  await loadProjects();
-  const tasks = [loadUsers()];
-  if (projects.value.length) {
-    tasks.push(onSelectProject(projects.value[0].id));
-  }
-  await Promise.all(tasks);
+  // 并行加载首页项目 + 用户池；不再自动选中第一个项目（分页后让用户主动选择）
+  await Promise.all([loadProjects(), loadUsers()]);
 });
 </script>
 
@@ -172,14 +189,16 @@ onMounted(async () => {
             <div class="border-b px-2 py-2">
               <a-input-search
                 v-model:value="projectKeyword"
-                placeholder="搜索项目名称 / 编码"
+                placeholder="搜索项目名称"
                 allow-clear
                 size="small"
+                @change="onProjectKeywordChange"
+                @search="onProjectKeywordChange"
               />
             </div>
             <div class="flex-1 overflow-auto">
               <a-empty
-                v-if="filteredProjects.length === 0"
+                v-if="projects.length === 0"
                 description="暂无项目"
                 class="mt-10"
               />
@@ -192,14 +211,25 @@ onMounted(async () => {
                 class="border-0"
               >
                 <a-menu-item
-                  v-for="project in filteredProjects"
+                  v-for="project in projects"
                   :key="String(project.id)"
-                  @click="onSelectProject(project.id)"
+                  @click="onSelectProject(project)"
                 >
                   {{ project.name }}
                   <span class="ml-2 text-gray-400">{{ project.code }}</span>
                 </a-menu-item>
               </a-menu>
+            </div>
+            <div class="border-t flex justify-end px-2 py-2">
+              <a-pagination
+                :current="projectPage"
+                :page-size="PROJECT_PAGE_SIZE"
+                :total="projectTotal"
+                size="small"
+                :show-size-changer="false"
+                :show-total="(t: number) => `共 ${t} 个`"
+                @change="onProjectPageChange"
+              />
             </div>
           </a-card>
         </a-col>
