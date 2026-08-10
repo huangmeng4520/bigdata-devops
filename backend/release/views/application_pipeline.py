@@ -103,7 +103,7 @@ class ApplicationPipelineConfigViewSet(DataPermissionMixin, CustomModelViewSet):
     @action(detail=True, methods=['post'])
     def generate(self, request, pk=None):
         """生成 Jenkinsfile"""
-        from ..pipeline_utils import get_template_content, build_pipeline_variables
+        from ..pipeline_utils import get_template_content, build_pipeline_variables, get_builtin_variables
 
         config = self.get_object()
         app = config.application
@@ -137,7 +137,8 @@ class ApplicationPipelineConfigViewSet(DataPermissionMixin, CustomModelViewSet):
             'data': {
                 'version': new_version,
                 'version_id': app_version.id,
-                'content': content
+                'content': content,
+                'builtin_variables': get_builtin_variables(),
             }
         })
 
@@ -221,7 +222,7 @@ class ApplicationPipelineConfigViewSet(DataPermissionMixin, CustomModelViewSet):
 
         一键操作：生成新版本 + 触发同步
         """
-        from ..pipeline_utils import get_template_content, build_pipeline_variables
+        from ..pipeline_utils import get_template_content, build_pipeline_variables, get_builtin_variables
         from ..tasks import sync_jenkins_config
 
         config = self.get_object()
@@ -261,6 +262,7 @@ class ApplicationPipelineConfigViewSet(DataPermissionMixin, CustomModelViewSet):
                 'version_id': app_version.id,
                 'content': content,
                 'task_id': task.id,
+                'builtin_variables': get_builtin_variables(),
                 'message': 'Jenkinsfile 已生成，正在同步到 Jenkins...'
             }
         })

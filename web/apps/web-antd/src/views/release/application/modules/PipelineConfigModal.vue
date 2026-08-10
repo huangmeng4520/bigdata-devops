@@ -41,6 +41,11 @@ import {
 } from '#/api/release/pipelineTemplate';
 import type { ApplicationPipelineApi } from '#/api/release';
 import { format_datetime } from '#/utils/date';
+import {
+  VARIABLE_PRIORITY,
+  BUILTIN_VARIABLES,
+  BUILTIN_VAR_COLUMNS,
+} from '../../utils/pipelineBuiltin';
 
 const SYNC_STATUS_COLORS: Record<number, string> = {
   0: 'default', 1: 'processing', 2: 'success', 3: 'error',
@@ -371,6 +376,24 @@ const versionColumns = [
       :width="640"
       @close="resetDrawerForm"
     >
+      <a-alert type="info" show-icon class="mb-3">
+        <template #message>变量替换优先级：应用字段 → 模板默认值 → 用户覆盖</template>
+        <template #description>
+          <div v-for="p in VARIABLE_PRIORITY" :key="p" style="font-size: 12px;">{{ p }}</div>
+        </template>
+      </a-alert>
+      <a-collapse :bordered="false" ghost class="mb-2">
+        <a-collapse-panel key="builtin-vars" header="💡 模板可用的内置变量清单">
+          <a-table
+            :columns="BUILTIN_VAR_COLUMNS"
+            :data-source="BUILTIN_VARIABLES"
+            :pagination="false"
+            size="small"
+            row-key="name"
+          />
+        </a-collapse-panel>
+      </a-collapse>
+
       <Form layout="vertical">
         <FormItem label="关联模板">
           <Select

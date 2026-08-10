@@ -105,13 +105,15 @@ class PipelineTemplateViewSet(CustomModelViewSet):
         content = template_version.content
         for key, value in variables.items():
             content = content.replace(f'${{{key}}}', str(value))
-        
+
+        from ..pipeline_utils import get_builtin_variables
         return Response({
             'code': 0,
             'data': {
                 'content': content,
                 'variables': variables,
-                'stages': template_version.stages
+                'stages': template_version.stages,
+                'builtin_variables': get_builtin_variables(),
             }
         })
 

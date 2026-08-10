@@ -38,7 +38,8 @@ const selectedProject = ref<number | undefined>(undefined);
 
 async function fetchProjects() {
   try {
-    const data = await getProjectList({ page: 1, per_page: 100 });
+    // 后端 CustomPagination 的分页参数为 pageSize（非 per_page），否则参数会被忽略只能取默认 20 条
+    const data = await getProjectList({ page: 1, pageSize: 100 });
     const list = Array.isArray(data) ? data : data?.items || [];
     projectList.value = list.filter(
       (p: ProjectOption) => p.gitlab_group_id && p.gitlab_group_id > 0
@@ -135,6 +136,8 @@ const [Modal, modalApi] = useVbenModal({
   onOpenChange: (isOpen: boolean) => {
     if (isOpen) {
       resetForm();
+      // 弹窗打开时加载所属项目下拉数据，否则 projectList 恒为空导致下拉无数据
+      fetchProjects();
     }
   },
 });

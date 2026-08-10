@@ -16,6 +16,11 @@ import {
 } from '#/api/release';
 
 import { useRouter } from 'vue-router';
+import {
+  JENKINS_BUILD_PARAMS,
+  BUILD_PARAM_COLUMNS,
+  RELEASE_REQUIRED_FIELDS,
+} from '../../utils/pipelineBuiltin';
 
 const emit = defineEmits<{
   success: [];
@@ -359,6 +364,32 @@ const scopeLabelMap: Record<string, string> = {
             :maxlength="256"
           />
         </div>
+
+        <!-- 硬性逻辑提示：构建参数 + 必填项 -->
+        <a-collapse :bordered="false" ghost class="mb-2">
+          <a-collapse-panel key="build-params" header="📦 发布将传递给 Jenkins 的构建参数">
+            <p class="text-xs" style="color: #999; margin-bottom: 8px;">
+              以下参数会随构建触发传递给 Jenkins Job，模板内可用 <code>params.参数名</code> 引用；注意参数名与模板内置变量（如 <code>${APP_NAME}</code>）不同。
+            </p>
+            <a-table
+              :columns="BUILD_PARAM_COLUMNS"
+              :data-source="JENKINS_BUILD_PARAMS"
+              :pagination="false"
+              size="small"
+              row-key="name"
+            />
+          </a-collapse-panel>
+          <a-collapse-panel key="required-fields" header="✅ 触发构建前需满足的条件（任一缺失即失败）">
+            <a-list :data-source="RELEASE_REQUIRED_FIELDS" size="small" :split="false">
+              <template #renderItem="{ item }">
+                <a-list-item style="padding: 4px 0;">
+                  <code style="margin-right: 8px;">{{ item.field }}</code>
+                  <span style="color: #666;">{{ item.desc }}</span>
+                </a-list-item>
+              </template>
+            </a-list>
+          </a-collapse-panel>
+        </a-collapse>
 
         <!-- 环境提示 -->
         <div v-if="selectedEnv" class="env-tips">

@@ -285,7 +285,10 @@ function refreshGrid() {
               label: '删除',
               auth: ['release:module:delete'],
               danger: true,
-              onClick: () => onDelete(row),
+              popConfirm: {
+                title: $t('ui.actionMessage.deleteConfirm', [row.name]),
+                confirm: () => onDelete(row),
+              },
             },
           ]"
         />

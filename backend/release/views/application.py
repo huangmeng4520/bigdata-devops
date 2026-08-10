@@ -307,6 +307,7 @@ class ApplicationViewSet(DataPermissionMixin, CustomModelViewSet):
         for key, value in variables.items():
             content = content.replace(f'${{{key}}}', str(value))
 
+        from ..pipeline_utils import get_builtin_variables
         return Response({
             "code": 0,
             "data": {
@@ -315,5 +316,6 @@ class ApplicationViewSet(DataPermissionMixin, CustomModelViewSet):
                 "template_version": latest_version.version,
                 "variables": variables,
                 "environment": config.environment.name if config.environment else None,
+                "builtin_variables": get_builtin_variables(),
             }
         })

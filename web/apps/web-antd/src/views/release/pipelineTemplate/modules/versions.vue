@@ -22,6 +22,10 @@ import {
   updateEnvironment,
   validateJenkinsfile,
 } from '../utils/jenkinsfileParser';
+import {
+  BUILTIN_VARIABLES,
+  BUILTIN_VAR_COLUMNS,
+} from '../../utils/pipelineBuiltin';
 
 const emit = defineEmits(['success']);
 
@@ -559,6 +563,21 @@ function getStatusColor(version: PipelineTemplateApi.TemplateVersion): string {
           </div>
         </div>
         
+        <a-collapse :bordered="false" ghost class="mb-2">
+          <a-collapse-panel key="builtin-vars" header="💡 内置变量说明（应用配置生成 Jenkinsfile 时自动替换）">
+            <p class="text-xs" style="color: #999; margin-bottom: 8px;">
+              模板中用 <code>${变量名}</code> 引用以下变量，生成时会被应用实际值替换；变量优先级：应用字段 → 模板默认值 → 用户覆盖。
+            </p>
+            <a-table
+              :columns="BUILTIN_VAR_COLUMNS"
+              :data-source="BUILTIN_VARIABLES"
+              :pagination="false"
+              size="small"
+              row-key="name"
+            />
+          </a-collapse-panel>
+        </a-collapse>
+
         <div class="editor-container">
           <div class="editor-toolbar">
             <span class="editor-title">Jenkinsfile</span>

@@ -62,9 +62,6 @@ async function loadProjects() {
   }));
 }
 
-// 初始化加载项目列表
-loadProjects();
-
 // 加载模块列表
 async function loadModules(projectId?: number) {
   const params: Record<string, any> = { page: 1, pageSize: 999, status: 1 };
@@ -77,8 +74,10 @@ async function loadModules(projectId?: number) {
   }));
 }
 
-// 初始加载所有模块
-loadModules();
+// 启动加载并保存 Promise，供 onMounted 等待 options 就绪后再 setValues
+// 否则 setValues 时 Select 的 options 仍为空，设置可能不生效，导致筛选条件丢失
+const loadProjectsPromise = loadProjects();
+const loadModulesPromise = loadModules();
 
 const route = useRoute();
 
@@ -88,14 +87,19 @@ onMounted(async () => {
   const codeRepoId = route.query.code_repository as string | undefined;
   const autoCreate = route.query.create as string | undefined;
 
+  // 等 Select 的 options 加载完成，确保 setValues 能正确匹配并显示选中项
+  await Promise.all([loadProjectsPromise, loadModulesPromise]);
   await nextTick();
 
+  // 搜索表单 schema 中只有 project / module 两个字段，code_repository 不在表单中
+  // 设置不存在的字段无意义且可能干扰 setValues，因此只设置实际存在的字段
   const formValues: Record<string, number> = {};
   if (projectId) formValues.project = Number(projectId);
   if (moduleId) formValues.module = Number(moduleId);
-  if (codeRepoId) formValues.code_repository = Number(codeRepoId);
   if (Object.keys(formValues).length > 0) {
     gridApi.formApi.setValues(formValues);
+    // 等 form 内部状态同步后再触发查询，避免 query 读到旧值
+    await nextTick();
     gridApi.query();
   }
 
