@@ -33,7 +33,8 @@ class ProjectSerializer(serializers.ModelSerializer):
         if not obj.gitlab_group_id:
             return None
         from release.services.base import ConfigService
-        gitlab_url = ConfigService.get(ConfigService.GITLAB_URL, default="")
+        # 拼接给前端用户点击跳转的外网地址，未配置 gitlab_external_url 时回退到 gitlab_url
+        gitlab_url = ConfigService.get_gitlab_external_url()
         if not gitlab_url:
             return None
         return f"{gitlab_url.rstrip('/')}/{obj.code}"
@@ -69,7 +70,8 @@ class ModuleSerializer(serializers.ModelSerializer):
         if not obj.gitlab_subgroup_id:
             return None
         from release.services.base import ConfigService
-        gitlab_url = ConfigService.get(ConfigService.GITLAB_URL, default="")
+        # 拼接给前端用户点击跳转的外网地址，未配置 gitlab_external_url 时回退到 gitlab_url
+        gitlab_url = ConfigService.get_gitlab_external_url()
         if not gitlab_url:
             return None
         return f"{gitlab_url.rstrip('/')}/{obj.project.code}/{obj.code}"
@@ -127,16 +129,30 @@ class CodeRepositorySerializer(serializers.ModelSerializer):
     project_name = serializers.CharField(source="project.name", read_only=True)
     module_name = serializers.CharField(source="module.name", read_only=True)
     app_count = serializers.SerializerMethodField()
-    status_display = serializers.CharField(source="get_status_display", read_only=True)
-    repository_type_display = serializers.CharField(source="get_repository_type_display", read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    repository_type_display = serializers.CharField(source='get_repository_type_display', read_only=True)
+    # git_http_url 在 DB 中存内网原值（Jenkins 内网 clone 用），
+    # 返回前端时替换为外网地址供用户点击跳转。
+    git_http_url = serializers.SerializerMethodField(read_only=True)
 
     def get_app_count(self, obj):
         return obj.applications.filter(is_deleted=False).count()
 
+    def get_git_http_url(self, obj):
+        value = getattr(obj, "git_http_url", None)
+        if not value:
+            return value
+        from release.services.gitlab_service import GitLabService
+        try:
+            svc = GitLabService()
+        except Exception:
+            return value
+        return svc._rewrite_url(value)
+
     class Meta:
         model = CodeRepository
         fields = "__all__"
-        read_only_fields = ["creator", "modifier", "create_time", "update_time", "gitlab_project_id", "git_url", "git_http_url"]
+        read_only_fields = ["creator", "modifier", "create_time", "update_time", "gitlab_project_id", "git_url"]
 
 
 class CodeRepositoryCreateSerializer(serializers.ModelSerializer):

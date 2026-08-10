@@ -100,13 +100,27 @@ async function loadConfigs() {
   }
 }
 
-async function loadTemplates() {
+async function loadTemplates(keyword?: string) {
   try {
-    const result = await getTemplateList({ page: 1, pageSize: 100, status: 1 });
+    const result = await getTemplateList({
+      page: 1,
+      pageSize: 50,
+      status: 1,
+      name: keyword || undefined,
+    });
     templates.value = (result as any)?.items ?? (Array.isArray(result) ? result : []);
   } catch {
     message.error('加载模板列表失败');
   }
+}
+
+// 关联模板远程搜索：用户输入时调用后端按 name 过滤，避免本地分页限制漏掉模板
+let templateSearchTimer: ReturnType<typeof setTimeout> | null = null;
+function handleTemplateSearch(value: string) {
+  if (templateSearchTimer) clearTimeout(templateSearchTimer);
+  templateSearchTimer = setTimeout(() => {
+    loadTemplates(value);
+  }, 300);
 }
 
 function getSyncTag(config: ApplicationPipelineApi.Config) {
@@ -398,9 +412,11 @@ const versionColumns = [
         <FormItem label="关联模板">
           <Select
             v-model:value="drawerForm.template"
-            placeholder="选择模板"
+            placeholder="输入模板名称搜索"
             allow-clear show-search
             :options="templateOptions"
+            :filter-option="false"
+            @search="handleTemplateSearch"
             @change="(val) => handleTemplateChange(val as number | undefined)"
           />
         </FormItem>

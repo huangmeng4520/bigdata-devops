@@ -1,3 +1,49 @@
+from urllib.parse import urlsplit, urlunsplit
+
+from .services.base import ConfigService
+
+
+def to_internal_git_url(url):
+    """
+    将代码仓库的 Git HTTP 地址的 host 替换为系统配置的 gitlab_url（内网）host，
+    供 Jenkins 内网 clone 使用。
+
+    DB 中 code_repository.git_http_url 存的是 GitLab API 原始返回值，
+    受 GitLab 服务端 external_url 控制，可能是外网地址；而 Jenkins 在内网
+    环境运行，无法访问外网。生成 Jenkinsfile / 构建参数时需要把 host
+    替换为内网 gitlab_url，path 保留不变。
+
+    Args:
+        url: 原始 Git HTTP 地址（如 http://gitlab.example.com/group/project.git）
+
+    Returns:
+        替换 host 后的内网地址；若 gitlab_url 未配置或 url 为空则原样返回
+    """
+    if not url or not isinstance(url, str):
+        return url
+    try:
+        parts = urlsplit(url)
+        if not parts.scheme or not parts.netloc:
+            return url
+        base = ConfigService.get(ConfigService.GITLAB_URL, default="").rstrip("/")
+        if not base:
+            return url
+        base_parts = urlsplit(base)
+        if not base_parts.netloc:
+            return url
+        if parts.netloc == base_parts.netloc:
+            return url
+        return urlunsplit((
+            base_parts.scheme or parts.scheme,
+            base_parts.netloc,
+            parts.path,
+            parts.query,
+            parts.fragment,
+        ))
+    except Exception:
+        return url
+
+
 # 应用字段自动注入的内置变量（模板中用 ${VAR} 引用，生成 Jenkinsfile 时替换）
 # 优先级：应用字段注入 → 模板默认值 → 用户覆盖(config.variables)
 BUILTIN_VARIABLES = [
@@ -80,6 +126,8 @@ def build_pipeline_variables(app, config, template_variables_def=None):
         git_repo = app.code_repository.git_http_url or app.code_repository.git_url or ''
     if not git_repo:
         git_repo = app.git_url or ''
+    # Jenkins 在内网运行，需把 git_http_url 的 host 替换为系统配置的 gitlab_url（内网）
+    git_repo = to_internal_git_url(git_repo)
     variables['GIT_REPO'] = git_repo
     variables['BUILD_BRANCH'] = app.build_branch or 'main'
     variables['BUILD_COMMAND'] = app.build_command or ''

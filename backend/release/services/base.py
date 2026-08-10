@@ -35,7 +35,8 @@ class ConfigService:
     CACHE_TIMEOUT = 300  # 5分钟缓存
 
     # 配置键名常量
-    GITLAB_URL = "gitlab_url"
+    GITLAB_URL = "gitlab_url"                  # 后端内网调用 GitLab API 用的地址
+    GITLAB_EXTERNAL_URL = "gitlab_external_url"  # 前端浏览器展示/跳转用的外网地址（缺省时回退到 GITLAB_URL）
     GITLAB_TOKEN = "gitlab_token"
     GITLAB_ROOT_GROUP = "gitlab_root_group"
 
@@ -101,7 +102,26 @@ class ConfigService:
     @classmethod
     def get_gitlab_config(cls) -> Dict[str, str]:
         """获取 GitLab 配置"""
-        return cls.get_all([cls.GITLAB_URL, cls.GITLAB_TOKEN, cls.GITLAB_ROOT_GROUP])
+        return cls.get_all([
+            cls.GITLAB_URL,
+            cls.GITLAB_EXTERNAL_URL,
+            cls.GITLAB_TOKEN,
+            cls.GITLAB_ROOT_GROUP,
+        ])
+
+    @classmethod
+    def get_gitlab_external_url(cls, use_cache: bool = True) -> str:
+        """
+        获取 GitLab 外网展示地址（用于拼接给前端用户点击跳转的 Web URL）。
+        若未配置 gitlab_external_url，则回退到 gitlab_url，保证未分离场景下行为不变。
+
+        Returns:
+            外网地址（已去除末尾斜杠），可能为空字符串
+        """
+        external = cls.get(cls.GITLAB_EXTERNAL_URL, default="", use_cache=use_cache).rstrip("/")
+        if external:
+            return external
+        return cls.get(cls.GITLAB_URL, default="", use_cache=use_cache).rstrip("/")
 
     @classmethod
     def get_jenkins_config(cls) -> Dict[str, str]:
@@ -126,7 +146,7 @@ class ConfigService:
         else:
             # 清除所有 devops 配置缓存
             keys = [
-                cls.GITLAB_URL, cls.GITLAB_TOKEN, cls.GITLAB_ROOT_GROUP,
+                cls.GITLAB_URL, cls.GITLAB_EXTERNAL_URL, cls.GITLAB_TOKEN, cls.GITLAB_ROOT_GROUP,
                 cls.JENKINS_URL, cls.JENKINS_USER, cls.JENKINS_TOKEN,
                 cls.HARBOR_URL, cls.HARBOR_USER, cls.HARBOR_PASSWORD,
                 cls.CONFIG_PACKAGE_PATH

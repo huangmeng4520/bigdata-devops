@@ -67,26 +67,56 @@ function tokenize(content: string): Token[] {
       col++;
       i++;
     } else if (char === "'" || char === '"') {
-      // 字符串
+      // 字符串（支持 Groovy 三引号 """...""" 和 '''...'''）
       const startChar = char;
-      let value = char;
-      i++;
-      col++;
-      while (i < content.length) {
-        const c = content[i];
-        value += c;
-        if (c === startChar && content[i - 1] !== '\\') {
+      const triple = content[i + 1] === startChar && content[i + 2] === startChar;
+      let value = '';
+      if (triple) {
+        // 三引号字符串：扫描直到匹配的三个连续引号
+        value = content.slice(i, i + 3);
+        i += 3;
+        col += 3;
+        while (i < content.length) {
+          const c = content[i];
+          value += c;
+          if (c === startChar
+            && content[i + 1] === startChar
+            && content[i + 2] === startChar
+            && content[i - 1] !== '\\') {
+            value += content.slice(i + 1, i + 3);
+            i += 3;
+            col += 3;
+            break;
+          }
+          if (c === '\n') {
+            line++;
+            col = 0;
+          } else {
+            col++;
+          }
           i++;
-          col++;
-          break;
         }
-        if (c === '\n') {
-          line++;
-          col = 0;
-        } else {
-          col++;
-        }
+      } else {
+        // 单引号 / 双引号字符串
+        value = char;
         i++;
+        col++;
+        while (i < content.length) {
+          const c = content[i];
+          value += c;
+          if (c === startChar && content[i - 1] !== '\\') {
+            i++;
+            col++;
+            break;
+          }
+          if (c === '\n') {
+            line++;
+            col = 0;
+          } else {
+            col++;
+          }
+          i++;
+        }
       }
       tokens.push({ type: TokenType.STRING, value, line: tokens[tokens.length - 1]?.line || 0, col });
     } else if (char === '/' && content[i + 1] === '/') {

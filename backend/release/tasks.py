@@ -770,8 +770,9 @@ def trigger_jenkins_build(self, release_id: int):
 
         if application.code_repository:
             code_repo = application.code_repository
-            git_url = code_repo.git_url or ''
-            logger.info(f"[Celery] 使用代码仓库: name={code_repo.name}, git_url={git_url}")
+            # 优先取 git_http_url（HTTP 协议，Jenkins 内网 clone 用）
+            git_url = code_repo.git_http_url or code_repo.git_url or ''
+            logger.info(f"[Celery] 使用代码仓库: name={code_repo.name}, git_http_url={code_repo.git_http_url}, git_url={code_repo.git_url}")
         elif application.git_url:
             # 兼容旧数据：使用应用原有的 git_url
             git_url = application.git_url or ''
@@ -784,6 +785,10 @@ def trigger_jenkins_build(self, release_id: int):
             release.save(update_fields=['status', 'status_message'])
             return {"success": False, "error": "代码仓库地址为空"}
 
+        # Jenkins 在内网运行，需把 git_http_url 的 host 替换为系统配置的 gitlab_url（内网）
+        from release.pipeline_utils import to_internal_git_url
+        git_repo_param = to_internal_git_url(git_url)
+
         # 构建参数 - 完整的 Jenkins Job 参数
         parameters = {
             'PROJECT': application.project.code,
@@ -792,7 +797,7 @@ def trigger_jenkins_build(self, release_id: int):
             'BRANCH': release.branch,
             'VERSION': release.version or '',
             'ENVIRONMENT': release.environment,
-            'GIT_REPO': git_url,
+            'GIT_REPO': git_repo_param,
             'CODE_SUBPATH': code_subpath,
             'BUILD_COMMAND': build_command,
             'PACKAGE_NAME': package_name,

@@ -4,11 +4,22 @@ GitLab API 服务
 封装 GitLab Group/Subgroup/Project 的创建和管理
 """
 import logging
+from urllib.parse import urlsplit, urlunsplit
+
 import requests
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Union
+
 from .base import BaseService, ConfigService, DevOpsException
 
 logger = logging.getLogger(__name__)
+
+
+# GitLab API 响应中需要做 host 替换的字段（前端展示/跳转用）
+# 仅替换 web_url：该字段只用于导入弹窗展示，不入库。
+# http_url_to_repo / ssh_url_to_repo 不在此替换：它们会入库为
+# CodeRepository.git_http_url / git_url，Jenkins 内网 clone 仍用原值；
+# 其外网展示由 CodeRepositorySerializer 在返回前端时统一替换。
+_EXTERNAL_URL_FIELDS = ("web_url",)
 
 
 class GitLabService(BaseService):
@@ -30,6 +41,8 @@ class GitLabService(BaseService):
         self.url = config.get(ConfigService.GITLAB_URL, "").rstrip("/")
         self.token = config.get(ConfigService.GITLAB_TOKEN, "")
         self.root_group_id = config.get(ConfigService.GITLAB_ROOT_GROUP)
+        # 外网展示地址：未配置时回退到 gitlab_url
+        self.external_url = ConfigService.get_gitlab_external_url()
 
         if not self.url or not self.token:
             self._log_warning("GitLab 配置不完整，服务可能无法正常工作")
@@ -40,6 +53,75 @@ class GitLabService(BaseService):
             "Private-Token": self.token,
             "Content-Type": "application/json"
         }
+
+    # ==================== 外网地址替换 ====================
+    # GitLab API 返回的 web_url / http_url_to_repo 是由 GitLab 服务端
+    # external_url 决定的。若 GitLab 配的是内网地址，前端拿到的也是内网
+    # 链接，外网用户无法点击跳转。这里在返回前端之前，把 host 替换为
+    # gitlab_external_url 配置的外网地址（仅替换 host:port，保留 path/query）。
+
+    def _rewrite_url(self, original: str) -> str:
+        """
+        将单个 URL 的 scheme+host+port 替换为 external_url。
+        path/query/fragment 保持不变。
+
+        Args:
+            original: 原始 URL
+
+        Returns:
+            替换后的 URL；若 external_url 未配置或与原 URL host 相同则原样返回
+        """
+        if not original or not isinstance(original, str):
+            return original
+        external = getattr(self, "external_url", "") or ""
+        if not external:
+            return original
+
+        try:
+            parts = urlsplit(original)
+            if not parts.scheme or not parts.netloc:
+                return original
+            ext_parts = urlsplit(external)
+            if not ext_parts.netloc:
+                return original
+            # host 相同则无需替换
+            if parts.netloc == ext_parts.netloc:
+                return original
+            return urlunsplit((
+                ext_parts.scheme or parts.scheme,
+                ext_parts.netloc,
+                parts.path,
+                parts.query,
+                parts.fragment,
+            ))
+        except Exception:
+            return original
+
+    def _rewrite_response_urls(self, data: Any) -> Any:
+        """
+        递归遍历 GitLab API 响应，把 web_url 字段的 host 替换为 external_url。
+
+        仅对返回给前端的展示字段做替换，不落库；入库的 git_url /
+        ssh_url_to_repo / http_url_to_repo 保持内网原值（Jenkins 内网 clone 用），
+        其外网展示由 CodeRepositorySerializer 在返回前端时统一替换。
+
+        Args:
+            data: GitLab API 响应（dict / list / 标量）
+
+        Returns:
+            替换后的同结构数据
+        """
+        if isinstance(data, dict):
+            result = {}
+            for k, v in data.items():
+                if k in _EXTERNAL_URL_FIELDS:
+                    result[k] = self._rewrite_url(v) if isinstance(v, str) else v
+                else:
+                    result[k] = self._rewrite_response_urls(v)
+            return result
+        if isinstance(data, list):
+            return [self._rewrite_response_urls(item) for item in data]
+        return data
 
     def _request(self, method: str, endpoint: str, return_headers: bool = False, **kwargs) -> Dict[str, Any]:
         """
@@ -88,6 +170,10 @@ class GitLabService(BaseService):
                 return ({}, response.headers) if return_headers else {}
 
             data = response.json()
+            # 把 web_url 字段的 host 替换为外网地址，供前端展示/跳转使用。
+            # web_url 不入库；http_url_to_repo / ssh_url_to_repo 保持内网原值，
+            # 其外网展示由 CodeRepositorySerializer 统一处理。
+            data = self._rewrite_response_urls(data)
             return (data, response.headers) if return_headers else data
 
         except requests.exceptions.Timeout:
